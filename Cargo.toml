@@ -1,0 +1,21 @@
+[package]
+authors = ["Jacob Brown <kardeiz@gmail.com>"]
+edition = "2018"
+name = "jsonrpc-v2"
+version = "0.1.0"
+
+[dependencies]
+erased-serde = "0.3.8"
+futures = "0.1.25"
+serde_derive = "1.0.85"
+
+[dependencies.serde]
+features = ["derive"]
+version = "1.0.85"
+
+[dependencies.serde_json]
+features = ["raw_value"]
+version = "1.0.37"
+
+[dev-dependencies]
+tokio = "0.1.15"
