@@ -97,6 +97,14 @@ impl<'de> Deserialize<'de> for Id {
 #[derive(Deserialize)]
 pub struct Params<T>(pub T);
 
+impl<T> Params<T> where T: DeserializeOwned {
+    fn from_opt_value(value_opt: Option<Value>) -> Result<Self, Error> {
+        serde_json::from_value(value_opt.unwrap_or_else(|| Value::Null))
+            .map(Params)
+            .map_err(|_| Error::INVALID_PARAMS )
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum RawRequestObject {
@@ -205,7 +213,7 @@ impl Response {
 pub trait WithFactory<T, S, P>: 'static
 where
     T: FromRequest<S>,
-    Params<P>: FromRequestMut<S>
+    P: DeserializeOwned
 {
     fn create(self) -> With<T, S, P>;
 }
@@ -219,7 +227,7 @@ pub struct With<T, S, P> {
 impl<T, S, P> With<T, S, P>
 where
     T: FromRequest<S>,
-    Params<P>: FromRequestMut<S>,
+    P: DeserializeOwned,
     S: 'static,
 {
     pub fn new<F: Fn(Params<P>, T) -> Box<Future<Item=Value, Error=Error> + Send> + Send + Sync + 'static>(f: F) -> Self {
@@ -235,7 +243,7 @@ impl<S, P, FN, I, E, FS, T> WithFactory<T, S, P> for FN
 where
     T: FromRequest<S> + Send + 'static,
     S: 'static,
-    Params<P>: FromRequestMut<S>,
+    P: DeserializeOwned,
     FN: Fn(Params<P>, T) -> I + Send + Sync + 'static,
     I: IntoFuture<Item = FS, Error = E> + 'static + Send,
     I::Future: Send + 'static,
@@ -253,22 +261,20 @@ where
 }
 
 pub trait MethodHandler<S>: 'static + Send {
-    fn handle(&self, req: RequestObject<S>) -> Box<Future<Item=Value, Error=Error> + Send>;
+    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=Value, Error=Error> + Send>;
 }
 
 impl<T, S, P> MethodHandler<S> for With<T, S, P>
 where
     T: FromRequest<S> + Send + 'static,
     <<T as FromRequest<S>>::Result as IntoFuture>::Future: Send,
-    Params<P>: FromRequestMut<S> + Send,
-    <<Params<P> as FromRequestMut<S>>::Result as IntoFuture>::Future: Send,
+    P: DeserializeOwned,
     P: 'static + Send,
     S: 'static + Send,
 {
-    fn handle(&self, mut req: RequestObject<S>) -> Box<Future<Item=Value, Error=Error> + Send> {
-        
+    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=Value, Error=Error> + Send> {        
         let handler = Arc::clone(&self.handler);
-        let fut = Params::from_request_mut(&mut req).into_future()
+        let fut = Params::from_opt_value(opt_value).into_future()
             .join(T::from_request(&req))
             .and_then(move |(params, t)| handler(params, t) );
         Box::new(fut)
@@ -296,8 +302,7 @@ impl<S: 'static + Send> Server<S> {
         F: WithFactory<T, S, P>,
         T: FromRequest<S> + Send + 'static,
         <<T as FromRequest<S>>::Result as IntoFuture>::Future: Send,
-        Params<P>: FromRequestMut<S>,
-        <<Params<P> as FromRequestMut<S>>::Result as IntoFuture>::Future: Send,
+        P: DeserializeOwned,
         P: Send + 'static
     {
         self.methods.insert(name, Box::new(handler.create()));
@@ -319,7 +324,7 @@ where
     type Result = Box<Future<Item=Response, Error=()> + Send>;
 
     fn handle(&self, req: RawRequestObject) -> Self::Result {
-        let req = RequestObject { inner: req, state: Arc::clone(&self.state) };
+        let mut req = RequestObject { inner: req, state: Arc::clone(&self.state) };
 
         let (opt_id, method_ref) = match req.inner {
             RawRequestObject::Request { ref method, ref id, .. } => (Some(id.clone()), method),
@@ -327,7 +332,13 @@ where
         };
 
         let rt = if let Some(method) = self.methods.get(method_ref.as_ref()) {
-            let rt = method.handle(req).then(|fut| match fut {
+            
+            let params_opt = match req.inner {
+                RawRequestObject::Request { ref mut params, .. } => params.take(),
+                RawRequestObject::Notification { ref mut params, .. } => params.take()
+            };
+
+            let rt = method.handle(&req, params_opt).then(|fut| match fut {
                 Ok(val) => future_ok(Response::result(val, opt_id)),
                 Err(e) => future_ok(Response::error(e, opt_id))
             });
