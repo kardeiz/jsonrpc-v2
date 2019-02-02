@@ -15,7 +15,9 @@ use std::collections::HashMap;
 
 use erased_serde::Serialize as ErasedSerialize;
 
-// type BoxedSerialize = Box<ErasedSerialize>;
+use actix::prelude::*;
+
+type BoxedSerialize = Box<ErasedSerialize + Send>;
 
 #[derive(Default, Debug)]
 pub struct V2;
@@ -123,31 +125,12 @@ pub enum RawRequestObject {
 
 pub struct RequestObject<S> {
     inner: RawRequestObject,
-    state: Arc<S>
+    state: Rc<S>
 }
 
 pub trait FromRequest<S>: Sized {
     type Result: IntoFuture<Item=Self, Error=Error>;
     fn from_request(req: &RequestObject<S>) -> Self::Result;
-}
-
-pub trait FromRequestMut<S>: Sized {
-    type Result: IntoFuture<Item=Self, Error=Error>;
-    fn from_request_mut(req: &mut RequestObject<S>) -> Self::Result;
-}
-
-impl<S, T> FromRequestMut<S> for Params<T> where T: DeserializeOwned + Send {
-    type Result = Result<Self, Error>;
-    fn from_request_mut(req: &mut RequestObject<S>) -> Result<Self, Error> {
-        let value_opt = match req.inner {
-            RawRequestObject::Request { ref mut params, .. } => params.take(),
-            RawRequestObject::Notification { ref mut params, .. } => params.take()
-        };
-
-        serde_json::from_value(value_opt.unwrap_or_else(|| Value::Null))
-            .map(Params)
-            .map_err(|_| Error::INVALID_PARAMS )
-    }
 }
 
 impl<S> FromRequest<S> for () {
@@ -157,7 +140,7 @@ impl<S> FromRequest<S> for () {
     }
 }
 
-pub struct State<S>(Arc<S>);
+pub struct State<S>(Rc<S>);
 
 impl<S> std::ops::Deref for State<S> {
     type Target = S;
@@ -169,7 +152,7 @@ impl<S> std::ops::Deref for State<S> {
 impl<S> FromRequest<S> for State<S> {
     type Result = Result<Self, Error>;
     fn from_request(req: &RequestObject<S>) -> Self::Result {
-        Ok(State(req.state.clone()))
+        Ok(State(Rc::clone(&req.state)))
     }
 }
 
@@ -177,7 +160,7 @@ impl<S> FromRequest<S> for State<S> {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum Error {
-    Full { code: i64, message: String, data: Option<Value> },
+    Full { code: i64, message: String, data: Option<BoxedSerialize> },
     PreDef { code: i64, message: &'static str },
 }
 
@@ -191,13 +174,13 @@ impl Error {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum Response {
-    Result { jsonrpc: V2, result: Value, id: Id },
+    Result { jsonrpc: V2, result: BoxedSerialize, id: Id },
     Error { jsonrpc: V2, error: Error, id: Id },
     Empty
 }
 
 impl Response {
-    fn result(result: Value, opt_id: Option<Id>) -> Self {
+    fn result(result: BoxedSerialize, opt_id: Option<Id>) -> Self {
         opt_id
             .map(|id| Response::Result { jsonrpc: V2, result, id })
             .unwrap_or_else(|| Response::Empty)
@@ -219,7 +202,7 @@ where
 }
 
 pub struct With<T, S, P> {
-    handler: Arc<Fn(Params<P>, T) -> Box<Future<Item=Value, Error=Error> + Send> + Send + Sync>,
+    handler: Rc<Fn(Params<P>, T) -> Box<Future<Item=BoxedSerialize, Error=Error>>>,
     _s: PhantomData<S>,
     _p: PhantomData<P>
 }
@@ -230,9 +213,9 @@ where
     P: DeserializeOwned,
     S: 'static,
 {
-    pub fn new<F: Fn(Params<P>, T) -> Box<Future<Item=Value, Error=Error> + Send> + Send + Sync + 'static>(f: F) -> Self {
+    pub fn new<F: Fn(Params<P>, T) -> Box<Future<Item=BoxedSerialize, Error=Error>> + 'static>(f: F) -> Self {
         With {
-            handler: Arc::new(f),
+            handler: Rc::new(f),
             _s: PhantomData,
             _p: PhantomData
         }
@@ -241,39 +224,38 @@ where
 
 impl<S, P, FN, I, E, FS, T> WithFactory<T, S, P> for FN
 where
-    T: FromRequest<S> + Send + 'static,
+    T: FromRequest<S> + 'static,
     S: 'static,
     P: DeserializeOwned,
-    FN: Fn(Params<P>, T) -> I + Send + Sync + 'static,
-    I: IntoFuture<Item = FS, Error = E> + 'static + Send,
-    I::Future: Send + 'static,
-    FS: Serialize + 'static,
+    FN: Fn(Params<P>, T) -> I + 'static,
+    I: IntoFuture<Item = FS, Error = E> + 'static,
+    I::Future: 'static,
+    FS: Serialize + Send + 'static,
     E: Into<Error> {
 
     fn create(self) -> With<T, S, P> {
         With::new(move |params, t| {
             let rt = (self)(params, t).into_future()
                 .map_err(|e| e.into() )
-                .and_then(|res| serde_json::to_value(res).into_future().map_err(|_| Error::INTERNAL_ERROR));
-            Box::new(rt) as Box<Future<Item=Value, Error=Error> + Send>
+                .map(|res| Box::new(res) as BoxedSerialize);
+            Box::new(rt) as Box<Future<Item=BoxedSerialize, Error=Error>>
         })
     }
 }
 
-pub trait MethodHandler<S>: 'static + Send {
-    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=Value, Error=Error> + Send>;
+pub trait MethodHandler<S>: 'static {
+    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=BoxedSerialize, Error=Error>>;
 }
 
 impl<T, S, P> MethodHandler<S> for With<T, S, P>
 where
-    T: FromRequest<S> + Send + 'static,
-    <<T as FromRequest<S>>::Result as IntoFuture>::Future: Send,
+    T: FromRequest<S> + 'static,
     P: DeserializeOwned,
-    P: 'static + Send,
-    S: 'static + Send,
+    P: 'static,
+    S: 'static,
 {
-    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=Value, Error=Error> + Send> {        
-        let handler = Arc::clone(&self.handler);
+    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=BoxedSerialize, Error=Error>> {        
+        let handler = Rc::clone(&self.handler);
         let fut = Params::from_opt_value(opt_value).into_future()
             .join(T::from_request(&req))
             .and_then(move |(params, t)| handler(params, t) );
@@ -282,28 +264,27 @@ where
 }
 
 pub struct Server<S> {
-    state: Arc<S>,
-    methods: HashMap<String, Box<MethodHandler<S> + Send>>
+    state: Rc<S>,
+    methods: HashMap<String, Box<MethodHandler<S>>>
 }
 
 impl Server<()> {
-    pub fn new() -> Self { Server { state: Arc::new(()), methods: HashMap::new() } }
+    pub fn new() -> Self { Server { state: Rc::new(()), methods: HashMap::new() } }
 }
 
-impl<S: 'static + Send> Server<S> {
+impl<S: 'static> Server<S> {
     pub fn with_state<NS>(mut self, state: NS) -> Server<NS> {
         let Server { .. } = self;
-        let state = Arc::new(state);
+        let state = Rc::new(state);
         Server { state, methods: HashMap::new() }
     }
 
     pub fn with_method<T, P, F>(mut self, name: String, handler: F) -> Self
     where
         F: WithFactory<T, S, P>,
-        T: FromRequest<S> + Send + 'static,
-        <<T as FromRequest<S>>::Result as IntoFuture>::Future: Send,
+        T: FromRequest<S> + 'static,
         P: DeserializeOwned,
-        P: Send + 'static
+        P: 'static
     {
         self.methods.insert(name, Box::new(handler.create()));
         self
@@ -311,20 +292,23 @@ impl<S: 'static + Send> Server<S> {
 
 }
 
-pub trait ServerHandler<S>: 'static + Send {
-    type Result: IntoFuture<Item=Response, Error=()>;
-    fn handle(&self, req: RawRequestObject) -> Self::Result;
+impl<S> Actor for Server<S>
+where
+    S: 'static {
+    type Context = Context<Self>;
 }
 
-impl<S> ServerHandler<S> for Server<S>
+impl Message for RawRequestObject {
+    type Result = Result<Response, ()>;
+}
+
+impl<S> Handler<RawRequestObject> for Server<S>
 where
-    S: Send + Sync + 'static,
+    S: 'static {
+    type Result = Box<Future<Item=Response, Error=()>>;
 
-{
-    type Result = Box<Future<Item=Response, Error=()> + Send>;
-
-    fn handle(&self, req: RawRequestObject) -> Self::Result {
-        let mut req = RequestObject { inner: req, state: Arc::clone(&self.state) };
+    fn handle(&mut self, req: RawRequestObject, _: &mut Self::Context) -> Self::Result {
+        let mut req = RequestObject { inner: req, state: Rc::clone(&self.state) };
 
         let (opt_id, method_ref) = match req.inner {
             RawRequestObject::Request { ref method, ref id, .. } => (Some(id.clone()), method),
@@ -350,7 +334,9 @@ where
 
         Box::new(rt)
     }
+
 }
+
 
 // pub struct BoxedMethod<S> {
 //     inner: Box<Fn(RequestObject<S>) -> Box<Future<Item=BoxedSerialize, Error=Error>>>,
