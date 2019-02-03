@@ -41,7 +41,8 @@ impl<'de> Deserialize<'de> for V2 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Id {
     Num(i64),
     Str(Box<str>),
@@ -64,68 +65,45 @@ impl Default for Id {
     fn default() -> Self { Id::Null }
 }
 
-impl Serialize for Id {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
-        match *self {
-            Id::Num(ref num) => num.serialize(serializer),
-            Id::Str(ref s) => s.serialize(serializer),
-            Id::Null => serializer.serialize_none()
-        }
-    }
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct RawRequestObject {
+    jsonrpc: V2, 
+    method: Box<str>, 
+    params: Option<Box<RawValue>>,
+    #[serde(deserialize_with = "RawRequestObject::deserialize_id")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<Option<Id>>
 }
 
-impl<'de> Deserialize<'de> for Id {
-    fn deserialize<D>(deserializer: D) -> Result<Id, D::Error>
-    where D: Deserializer<'de> {
-        
-        #[derive(Serialize, Deserialize)]
-        #[serde(untagged)]
-        pub enum PresentId {
-            Num(i64),
-            Str(Box<str>)
-        }
-
-        let out = match <Option<PresentId>>::deserialize(deserializer)? {
-            Some(PresentId::Num(num)) => Id::Num(num),
-            Some(PresentId::Str(s)) => Id::Str(s),
-            None => Id::Null
-        };
-
-        Ok(out)
+impl RawRequestObject {
+    fn deserialize_id<'de, D>(deserializer: D) -> Result<Option<Option<Id>>, D::Error>
+where
+    D: Deserializer<'de> {
+        Ok(Some(Option::deserialize(deserializer)?))
     }
-}
 
-#[derive(Deserialize)]
-pub struct Params<T>(pub T);
-
-impl<T> Params<T> where T: DeserializeOwned {
-    fn from_opt_value(value_opt: Option<Value>) -> Result<Self, Error> {
-        serde_json::from_value(value_opt.unwrap_or_else(|| Value::Null))
-            .map(Params)
-            .map_err(|_| Error::INVALID_PARAMS )
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum RawRequestObject {
-    Request { 
-        jsonrpc: V2, 
-        method: Box<str>, 
-        params: Option<Value>,
-        id: Id
-    },
-    Notification {
-        jsonrpc: V2, 
-        method: Box<str>,
-        params: Option<Value>,
-    }
 }
 
 pub struct RequestObject<S> {
     inner: RawRequestObject,
     state: Rc<S>
+}
+
+#[derive(Deserialize)]
+pub struct Params<T>(pub T);
+
+impl<'de, T> Params<T> where T: Deserialize<'de> {
+    fn from_request<S>(req: &'de RequestObject<S>) -> Result<Self, Error> {
+        let res = match req.inner.params {
+            Some(ref raw_value) => serde_json::from_str(raw_value.get()),
+            None => serde_json::from_str("null")
+        };
+
+        res
+            .map(Params)
+            .map_err(|_| Error::INVALID_PARAMS )
+    }
 }
 
 pub trait FromRequest<S>: Sized {
@@ -243,8 +221,19 @@ where
     }
 }
 
+impl<T, S, P> Actor for With<T, S, P>
+where
+    T: FromRequest<S> + 'static,
+    P: DeserializeOwned,
+    P: 'static,
+    S: 'static,
+{
+    type Context = Context<Self>;
+}
+
+
 pub trait MethodHandler<S>: 'static {
-    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=BoxedSerialize, Error=Error>>;
+    fn handle(&self, req: &RequestObject<S>) -> Box<Future<Item=BoxedSerialize, Error=Error>>;
 }
 
 impl<T, S, P> MethodHandler<S> for With<T, S, P>
@@ -254,9 +243,9 @@ where
     P: 'static,
     S: 'static,
 {
-    fn handle(&self, req: &RequestObject<S>, opt_value: Option<Value>) -> Box<Future<Item=BoxedSerialize, Error=Error>> {        
+    fn handle(&self, req: &RequestObject<S>) -> Box<Future<Item=BoxedSerialize, Error=Error>> {        
         let handler = Rc::clone(&self.handler);
-        let fut = Params::from_opt_value(opt_value).into_future()
+        let fut = Params::from_request(req).into_future()
             .join(T::from_request(&req))
             .and_then(move |(params, t)| handler(params, t) );
         Box::new(fut)
@@ -310,19 +299,14 @@ where
     fn handle(&mut self, req: RawRequestObject, _: &mut Self::Context) -> Self::Result {
         let mut req = RequestObject { inner: req, state: Rc::clone(&self.state) };
 
-        let (opt_id, method_ref) = match req.inner {
-            RawRequestObject::Request { ref method, ref id, .. } => (Some(id.clone()), method),
-            RawRequestObject::Notification { ref method, .. } => (None, method),
+        let opt_id = match req.inner.id {
+            Some(Some(ref id)) => Some(id.clone()),
+            Some(None) => Some(Id::Null),
+            None => None
         };
 
-        let rt = if let Some(method) = self.methods.get(method_ref.as_ref()) {
-            
-            let params_opt = match req.inner {
-                RawRequestObject::Request { ref mut params, .. } => params.take(),
-                RawRequestObject::Notification { ref mut params, .. } => params.take()
-            };
-
-            let rt = method.handle(&req, params_opt).then(|fut| match fut {
+        let rt = if let Some(method) = self.methods.get(req.inner.method.as_ref()) {
+            let rt = method.handle(&req).then(|fut| match fut {
                 Ok(val) => future_ok(Response::result(val, opt_id)),
                 Err(e) => future_ok(Response::error(e, opt_id))
             });

@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let sys = System::new("example");
 
-    let req: RawRequestObject = serde_json::from_str(r#"{"jsonrpc": "2.0", "method": "forty_two", "id": 10000}"#).unwrap();
+    let req: RawRequestObject = serde_json::from_str(r#"{"jsonrpc": "2.0", "method": "add", "params": [42, 23], "id": "1"}"#).unwrap();
 
     println!("{:?}", &req);
 
