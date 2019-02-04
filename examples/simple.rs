@@ -23,9 +23,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let sys = System::new("example");
 
-    let req: RawRequestObject = serde_json::from_str(r#"{"jsonrpc": "2.0", "method": "add", "params": [42, 23], "id": "1"}"#).unwrap();
+    let req = RequestBytes(br#"[{"jsonrpc": "2.0", "method": "aadd", "params": [42, 23], "id": "1"}"#);
 
-    println!("{:?}", &req);
+    // println!("{:?}", &req);
 
     let server = Server::new()
         .with_state(AppState { num: 23 })
