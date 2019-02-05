@@ -1,20 +1,15 @@
-use std::borrow::{Borrow, Cow};
-
-use serde::{Serialize, Deserialize, Serializer, Deserializer, de::{ DeserializeOwned, Visitor, MapAccess, SeqAccess}};
+use serde::{Serialize, Deserialize, Serializer, Deserializer, de::DeserializeOwned};
 
 use serde_json::{Value, value::RawValue};
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 use futures::{
     future::{
-        err as future_err, 
         ok as future_ok, 
         Future, 
         IntoFuture, 
-        Either as EitherFuture, 
-        FutureResult
+        Either as EitherFuture
     },
     stream::{futures_unordered, Stream},
 };
@@ -91,12 +86,11 @@ where
     D: Deserializer<'de> {
         Ok(Some(Option::deserialize(deserializer)?))
     }
-
 }
 
 pub struct WrappedRequestObject<S> {
     inner: RequestObject,
-    state: Rc<S>
+    state: Arc<S>
 }
 
 #[derive(Deserialize)]
@@ -122,12 +116,12 @@ pub trait FromRequest<S>: Sized {
 
 impl<S> FromRequest<S> for () {
     type Result = Result<Self, Error>;
-    fn from_request(req: &WrappedRequestObject<S>) -> Self::Result {
+    fn from_request(_: &WrappedRequestObject<S>) -> Self::Result {
         Ok(())
     }
 }
 
-pub struct State<S>(Rc<S>);
+pub struct State<S>(Arc<S>);
 
 impl<S> std::ops::Deref for State<S> {
     type Target = S;
@@ -139,15 +133,19 @@ impl<S> std::ops::Deref for State<S> {
 impl<S> FromRequest<S> for State<S> {
     type Result = Result<Self, Error>;
     fn from_request(req: &WrappedRequestObject<S>) -> Self::Result {
-        Ok(State(Rc::clone(&req.state)))
+        Ok(State(Arc::clone(&req.state)))
     }
 }
-
 
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum Error {
-    Full { code: i64, message: String, data: Option<BoxedSerialize> },
+    Full { 
+        code: i64, 
+        message: String, 
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<BoxedSerialize> 
+    },
     PreDef { code: i64, message: &'static str },
 }
 
@@ -156,9 +154,31 @@ impl Error {
     pub const METHOD_NOT_FOUND: Self = Error::PreDef { code: -32601, message: "Method not found" };
     pub const INVALID_PARAMS: Self = Error::PreDef { code: -32602, message: "Invalid params" };
     pub const PARSE_ERROR: Self = Error::PreDef { code: -32700, message: "Parse error" };
-    pub const INTERNAL_ERROR: Self = Error::PreDef { code: 1, message: "Could not process request" };
 }
 
+pub trait ErrorLike {
+    fn code(&self) -> i64;
+    fn message(&self) -> String;
+    fn data(&self) -> Option<BoxedSerialize> {
+        None
+    }
+}
+
+impl<T> From<T> for Error where T: ErrorLike {
+    fn from(t: T) -> Error {
+        Error::Full {
+            code: t.code(),
+            message: t.message(),
+            data: t.data()
+        }
+    }
+}
+
+#[cfg(feature="easy_errors")]
+impl<T> ErrorLike for T where T: std::fmt::Display {
+    fn code(&self) -> i64 { 0 }
+    fn message(&self) -> String { self.to_string() }
+}
 
 #[derive(Serialize)]
 #[serde(untagged)]
@@ -191,7 +211,7 @@ where
 }
 
 pub struct With<T, S, P> {
-    handler: Rc<Fn(Params<P>, T) -> Box<Future<Item=BoxedSerialize, Error=Error>>>,
+    handler: Arc<Fn(Params<P>, T) -> Box<Future<Item=BoxedSerialize, Error=Error>> + Send + Sync>,
     _s: PhantomData<S>,
     _p: PhantomData<P>
 }
@@ -202,9 +222,9 @@ where
     P: DeserializeOwned,
     S: 'static,
 {
-    pub fn new<F: Fn(Params<P>, T) -> Box<Future<Item=BoxedSerialize, Error=Error>> + 'static>(f: F) -> Self {
+    pub fn new<F: Fn(Params<P>, T) -> Box<Future<Item=BoxedSerialize, Error=Error>> + 'static + Send + Sync>(f: F) -> Self {
         With {
-            handler: Rc::new(f),
+            handler: Arc::new(f),
             _s: PhantomData,
             _p: PhantomData
         }
@@ -216,7 +236,7 @@ where
     T: FromRequest<S> + 'static,
     S: 'static,
     P: DeserializeOwned,
-    FN: Fn(Params<P>, T) -> I + 'static,
+    FN: Fn(Params<P>, T) -> I + 'static + Send + Sync,
     I: IntoFuture<Item = FS, Error = E> + 'static,
     I::Future: 'static,
     FS: Serialize + Send + 'static,
@@ -233,7 +253,7 @@ where
     }
 }
 
-pub trait Method<S>: 'static {
+pub trait Method<S>: 'static + Send + Sync {
     fn handle(&self, req: &WrappedRequestObject<S>) -> Box<Future<Item=BoxedSerialize, Error=Error>>;
 }
 
@@ -241,11 +261,11 @@ impl<T, S, P> Method<S> for With<T, S, P>
 where
     T: FromRequest<S> + 'static,
     P: DeserializeOwned,
-    P: 'static,
-    S: 'static,
+    P: 'static + Send + Sync,
+    S: 'static + Send + Sync,
 {
     fn handle(&self, req: &WrappedRequestObject<S>) -> Box<Future<Item=BoxedSerialize, Error=Error>> {        
-        let handler = Rc::clone(&self.handler);
+        let handler = Arc::clone(&self.handler);
         let fut = Params::from_request_inner(&req.inner).into_future()
             .join(T::from_request(req))
             .and_then(move |(params, t)| handler(params, t) );
@@ -254,27 +274,24 @@ where
 }
 
 pub struct Server<S> {
-    state: Rc<S>,
+    state: Arc<S>,
     methods: HashMap<String, Box<Method<S>>>
 }
 
 impl Server<()> {
-    pub fn new() -> Self { Server { state: Rc::new(()), methods: HashMap::new() } }
+    pub fn new() -> Self { Server { state: Arc::new(()), methods: HashMap::new() } }
 }
 
-impl<S: 'static> Server<S> {
-    pub fn with_state<NS>(mut self, state: NS) -> Server<NS> {
-        let Server { .. } = self;
-        let state = Rc::new(state);
-        Server { state, methods: HashMap::new() }
+impl<S: 'static + Send + Sync> Server<S> {
+    pub fn with_state(state: S) -> Self {
+        Server { state: Arc::new(state), methods: HashMap::new() }
     }
 
     pub fn with_method<T, P, F>(mut self, name: String, handler: F) -> Self
     where
         F: WithFactory<T, S, P>,
         T: FromRequest<S> + 'static,
-        P: DeserializeOwned,
-        P: 'static
+        P: DeserializeOwned + 'static + Send + Sync
     {
         self.methods.insert(name, Box::new(handler.create()));
         self
@@ -286,14 +303,14 @@ impl<S: 'static> Server<S> {
 pub struct ManyRequestObjects(pub Vec<RequestObject>);
 
 #[derive(Debug)]
-pub enum OneOrManyRawValues<'a> {
+enum OneOrManyRawValues<'a> {
     Many(Vec<&'a RawValue>),
     One(&'a RawValue)
 }
 
 impl<'a> OneOrManyRawValues<'a> {
     pub fn try_from_slice(slice: &'a [u8]) -> Result<Self, serde_json::Error> {
-        if !slice.is_empty() && slice[0] == b'[' {
+        if slice.first() == Some(&b'[') {
             Ok(OneOrManyRawValues::Many(serde_json::from_slice::<Vec<&RawValue>>(slice)?))
         } else {
             Ok(OneOrManyRawValues::One(serde_json::from_slice::<&RawValue>(slice)?))
@@ -334,7 +351,7 @@ impl From<Vec<Response>> for ResponseObjects {
     }
 }
 
-pub struct RequestBytes<'a>(pub &'a [u8]);
+pub struct RequestBytes(pub bytes::Bytes);
 
 impl<S> Actor for Server<S>
 where
@@ -350,7 +367,7 @@ impl Message for ManyRequestObjects {
     type Result = Result<ResponseObjects, ()>;
 }
 
-impl<'a> Message for RequestBytes<'a> {
+impl Message for RequestBytes {
     type Result = Result<ResponseObjects, ()>;
 }
 
@@ -360,7 +377,7 @@ where
     type Result = Box<Future<Item=Response, Error=()>>;
 
     fn handle(&mut self, msg: RequestObject, _: &mut Self::Context) -> Self::Result {
-        let mut req = WrappedRequestObject { inner: msg, state: Rc::clone(&self.state) };
+        let req = WrappedRequestObject { inner: msg, state: Arc::clone(&self.state) };
 
         let opt_id = match req.inner.id {
             Some(Some(ref id)) => Some(id.clone()),
@@ -395,12 +412,12 @@ where
     }
 }
 
-impl<'a, S> Handler<RequestBytes<'a>> for Server<S>
+impl<S> Handler<RequestBytes> for Server<S>
 where
     S: 'static {
     type Result = Box<Future<Item=ResponseObjects, Error=()>>;
 
-    fn handle(&mut self, msg: RequestBytes<'a>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: RequestBytes, ctx: &mut Self::Context) -> Self::Result {
         if let Ok(raw_values) = OneOrManyRawValues::try_from_slice(msg.0.as_ref()) {
             match raw_values {
                 OneOrManyRawValues::Many(raw_reqs) => {
@@ -424,7 +441,7 @@ where
 
                     return Box::new(
                         self.handle(ManyRequestObjects(okays.into_iter().flat_map(|x| x).collect()), ctx).map(
-                            |mut res| {
+                            |res| {
                                 match res {
                                     ResponseObjects::One(one) => {
                                         let mut many = vec![one];
