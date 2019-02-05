@@ -6,7 +6,7 @@ version = "0.1.0"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
-readme = "../README.md"
+readme = "README.md"
 repository = "https://github.com/kardeiz/jsonrpc-v2"
 
 [features]

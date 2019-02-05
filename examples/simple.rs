@@ -1,14 +1,15 @@
-use jsonrpc_v2::*;
-use futures::future::Future;
 use actix::prelude::*;
+use futures::future::Future;
+use jsonrpc_v2::*;
 
 // use actix_web
 use futures::future::IntoFuture;
 // use actix_web::handler::AsyncResponder;
 
-fn api((bytes, rpc): (bytes::Bytes, actix_web::State<actix::Addr<Server<AppState>>>)) -> impl Future<Item=actix_web::HttpResponse, Error=actix_web::Error> {
+fn api(
+    (bytes, rpc): (bytes::Bytes, actix_web::State<actix::Addr<Server<AppState>>>)
+) -> impl Future<Item = actix_web::HttpResponse, Error = actix_web::Error> {
     rpc.send(RequestBytes(bytes)).from_err().and_then(|res| {
-        // res.to();
         match res {
             Ok(json) => Ok(actix_web::HttpResponse::Ok().json(json)),
             Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
@@ -20,9 +21,7 @@ fn add(Params(params): Params<(usize, usize)>, state: State<AppState>) -> Result
     Ok(params.0 + params.1 + state.num)
 }
 
-fn forty_two(_params: Params<()>, _ctx: ()) -> Result<usize, Error> {
-    Err(42.into())
-}
+fn forty_two(_params: Params<()>, _ctx: ()) -> Result<usize, Error> { Err(42.into()) }
 
 // fn subtract(Params(params): Params<(usize, usize)>, state: State<(usize,)>) -> Result<usize, Error> {
 //     Ok(params.0 - params.1 - state.0)
@@ -32,9 +31,7 @@ pub struct AppState {
     num: usize
 }
 
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    
     // let sys = System::new("example");
 
     // let req = RequestBytes(br#"[{"jsonrpc": "2.0", "method": "add", "params": [42, 23], "id": "1"}"#);
@@ -42,16 +39,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // println!("{:?}", &req);
 
     let server = Server::with_state(AppState { num: 23 })
-        .with_method("forty_two".into(), forty_two)
-        .with_method("add".into(), add);
+        .with_method("forty_two", forty_two)
+        .with_method("add", add);
 
-    let addr = actix::Arbiter::start(|_| server );
+    // let addr = actix::Arbiter::start(|_| server);
 
-    actix_web::server::new(move || actix_web::App::with_state(addr.clone())
-        .resource(
-            "/api", |r| r.method(http::Method::POST).with_async(api)))
-        .bind("0.0.0.0:3000").unwrap()
-        .run();
+    let addr = server.start();
+
+    actix_web::server::new(move || {
+        actix_web::App::with_state(addr.clone())
+            .resource("/api", |r| r.method(http::Method::POST).with_async(api))
+    })
+    .bind("0.0.0.0:3000")
+    .unwrap()
+    .run();
 
     // let addr = server.start();
 
