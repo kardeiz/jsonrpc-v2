@@ -293,6 +293,38 @@ impl<S: 'static + Send + Sync> Server<S> {
         self.methods.insert(name.into(), Box::new(handler.create()));
         self
     }
+
+    pub fn finish(self) -> ServerAddress<S> {
+        ServerAddress(self.start())
+    }
+}
+
+pub struct ServerAddress<S: 'static>(pub Addr<Server<S>>);
+
+impl<S> Clone for ServerAddress<S> {
+    fn clone(&self) -> Self { 
+        ServerAddress(self.0.clone())
+    }
+}
+
+impl<S, WS: 'static> actix_web::dev::Handler<WS> for ServerAddress<S> {
+    type Result = Box<Future<Item = actix_web::HttpResponse, Error = actix_web::Error>>;
+    fn handle(&self, req: &actix_web::HttpRequest<WS>) -> Self::Result {
+        use actix_web::FromRequest;
+        let addr = self.0.clone();
+        let rt = bytes::Bytes::extract(req)
+            .into_future()
+            .and_then(|x| x)
+            .and_then(move |bytes| {
+                addr.send(RequestBytes(bytes)).from_err().and_then(|res| {
+                    match res {
+                        Ok(json) => Ok(actix_web::HttpResponse::Ok().json(json)),
+                        Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
+                    }
+                })
+            });
+        Box::new(rt)
+    }
 }
 
 #[derive(Debug, Deserialize)]

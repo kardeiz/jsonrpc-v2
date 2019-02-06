@@ -38,21 +38,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // println!("{:?}", &req);
 
-    let server = Server::with_state(AppState { num: 23 })
+    let jsonrpc = Server::with_state(AppState { num: 23 })
         .with_method("forty_two", forty_two)
-        .with_method("add", add);
+        .with_method("add", add)
+        .finish();
+
+    // jsonrpc.to();
 
     // let addr = actix::Arbiter::start(|_| server);
 
-    let addr = server.start();
+    // let addr = jsonrpc.start();
 
     actix_web::server::new(move || {
+        let jsonrpc = jsonrpc.clone();
+        actix_web::App::with_state(())
+            .resource("/api", |r| r.method(http::Method::POST).h(jsonrpc))
+    })
+    .bind("0.0.0.0:3000")
+    .unwrap()
+    .run();
+
+       // let server = Server::with_state(AppState { num: 23 })
+       //  .with_method("forty_two", forty_two)
+       //  .with_method("add", add);
+
+    // let addr = actix::Arbiter::start(|_| server);
+
+
+
+    /*actix_web::server::new(move || {
         actix_web::App::with_state(addr.clone())
             .resource("/api", |r| r.method(http::Method::POST).with_async(api))
     })
     .bind("0.0.0.0:3000")
     .unwrap()
-    .run();
+    .run();*/
 
     // let addr = server.start();
 
