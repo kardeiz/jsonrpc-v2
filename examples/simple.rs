@@ -21,7 +21,7 @@ fn add(Params(params): Params<(usize, usize)>, state: State<AppState>) -> Result
     Ok(params.0 + params.1 + state.num)
 }
 
-fn forty_two(_params: Params<()>, _ctx: ()) -> Result<usize, Error> { Err(42.into()) }
+fn forty_two(_params: Params<()>, ctx: ()) -> Result<usize, Error> { Err(42.into()) }
 
 // fn subtract(Params(params): Params<(usize, usize)>, state: State<(usize,)>) -> Result<usize, Error> {
 //     Ok(params.0 - params.1 - state.0)

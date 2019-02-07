@@ -187,60 +187,35 @@ impl Response {
     fn error(error: Error, id: Id) -> Self { Response::Error { jsonrpc: V2, error, id } }
 }
 
-pub trait WithFactory<T, S, P>: 'static
-where
-    T: FromRequest<S>,
-    P: DeserializeOwned {
-    fn create(self) -> With<T, S, P>;
-}
-
 pub struct With<T, S, P> {
     handler:
-        Arc<Fn(Params<P>, T) -> Box<Future<Item = BoxedSerialize, Error = Error>> + Send + Sync>,
+        Arc<Fn(Params<P>, T) -> Box<Future<Item = BoxedSerialize, Error = Error>> + 'static + Send + Sync>,
     _s: PhantomData<S>,
-    _p: PhantomData<P>
 }
 
-impl<T, S, P> With<T, S, P>
-where
-    T: FromRequest<S>,
-    P: DeserializeOwned,
-    S: 'static
-{
-    pub fn new<
-        F: Fn(Params<P>, T) -> Box<Future<Item = BoxedSerialize, Error = Error>>
-            + 'static
-            + Send
-            + Sync
-    >(
-        f: F
-    ) -> Self {
-        With { handler: Arc::new(f), _s: PhantomData, _p: PhantomData }
-    }
-}
-
-impl<S, P, FN, I, E, FS, T> WithFactory<T, S, P> for FN
-where
-    T: FromRequest<S> + 'static,
-    S: 'static,
-    P: DeserializeOwned,
-    FN: Fn(Params<P>, T) -> I + 'static + Send + Sync,
-    I: IntoFuture<Item = FS, Error = E> + 'static,
-    I::Future: 'static,
-    FS: Serialize + Send + 'static,
-    E: Into<Error>
-{
-    fn create(self) -> With<T, S, P> {
-        With::new(move |params, t| {
-            let rt = (self)(params, t)
+impl<S, P, FN, I, E, FS, T> From<FN> for With<T, S, P> where
+        T: FromRequest<S> + 'static,
+        S: 'static,
+        P: DeserializeOwned,
+        FN: Fn(Params<P>, T) -> I + 'static + Send + Sync,
+        I: IntoFuture<Item = FS, Error = E> + 'static,
+        I::Future: 'static,
+        FS: Serialize + Send + 'static,
+        E: Into<Error>
+    {
+    fn from(u: FN) -> Self {
+        let handler = move |params, t| {
+            let rt = (u)(params, t)
                 .into_future()
                 .map_err(|e| e.into())
                 .map(|res| Box::new(res) as BoxedSerialize);
 
             Box::new(rt) as Box<Future<Item = BoxedSerialize, Error = Error>>
-        })
+        };
+        With { handler: Arc::new(handler), _s: PhantomData }
     }
 }
+
 
 pub trait Method<S>: 'static + Send + Sync {
     fn handle(
@@ -284,13 +259,13 @@ impl<S: 'static + Send + Sync> Server<S> {
         Server { state: Arc::new(state), methods: HashMap::new() }
     }
 
-    pub fn with_method<T, P, F, I>(mut self, name: I, handler: F) -> Self
+    pub fn with_method<F, I, T, P>(mut self, name: I, handler: F) -> Self
     where
-        F: WithFactory<T, S, P>,
         T: FromRequest<S> + 'static,
         P: DeserializeOwned + 'static + Send + Sync,
+        F: Into<With<T, S, P>>,
         I: Into<String> {
-        self.methods.insert(name.into(), Box::new(handler.create()));
+        self.methods.insert(name.into(), Box::new(handler.into()));
         self
     }
 
