@@ -331,9 +331,8 @@ impl<S: 'static> actix_web::Responder for Server<S> {
     
     fn respond_to(self, req: &actix_web::HttpRequest) -> Self::Future {
         use actix_web::FromRequest;
-        let cloned = self.clone();
         let rt = bytes::Bytes::extract(req).into_future().and_then(move |bytes| {
-            Handler::handle(&cloned, RequestBytes(bytes)).then(|res| match res {
+            Handler::handle(&self, RequestBytes(bytes)).then(|res| match res {
                 Ok(res_inner) => {
                     match res_inner {
                         ResponseObjects::Empty => Ok(actix_web::HttpResponse::NoContent().finish()),
