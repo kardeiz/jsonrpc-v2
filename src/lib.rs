@@ -304,13 +304,35 @@ impl<S: 'static + Send + Sync> InnerServer<S> {
     }
 }
 
-impl<S: 'static, WS: 'static> actix_web::dev::Handler<WS> for Server<S> {
-    type Result = Box<Future<Item = actix_web::HttpResponse, Error = actix_web::Error>>;
+// impl<S: 'static, WS: 'static> actix_web::dev::Handler<WS> for Server<S> {
+//     type Result = Box<Future<Item = actix_web::HttpResponse, Error = actix_web::Error>>;
 
-    fn handle(&self, req: &actix_web::HttpRequest<WS>) -> Self::Result {
+//     fn handle(&self, req: &actix_web::HttpRequest<WS>) -> Self::Result {
+//         use actix_web::FromRequest;
+//         let cloned = self.clone();
+//         let rt = bytes::Bytes::extract(req).into_future().and_then(|x| x).and_then(move |bytes| {
+//             Handler::handle(&cloned, RequestBytes(bytes)).then(|res| match res {
+//                 Ok(res_inner) => {
+//                     match res_inner {
+//                         ResponseObjects::Empty => Ok(actix_web::HttpResponse::NoContent().finish()),
+//                         json => Ok(actix_web::HttpResponse::Ok().json(json))
+//                     }                    
+//                 }
+//                 Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
+//             })
+//         });
+//         Box::new(rt)
+//     }
+// }
+
+impl<S: 'static> actix_web::Responder for Server<S> {
+    type Error = actix_web::Error;
+    type Future = Box<Future<Item = actix_web::HttpResponse, Error = Self::Error>>;
+    
+    fn respond_to(self, req: &actix_web::HttpRequest) -> Self::Future {
         use actix_web::FromRequest;
         let cloned = self.clone();
-        let rt = bytes::Bytes::extract(req).into_future().and_then(|x| x).and_then(move |bytes| {
+        let rt = bytes::Bytes::extract(req).into_future().and_then(move |bytes| {
             Handler::handle(&cloned, RequestBytes(bytes)).then(|res| match res {
                 Ok(res_inner) => {
                     match res_inner {
