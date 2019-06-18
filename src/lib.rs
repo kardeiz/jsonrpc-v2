@@ -304,6 +304,47 @@ impl<S: 'static + Send + Sync> InnerServer<S> {
     }
 }
 
+impl<S: 'static + Send + Sync> Server<S> {
+    pub fn into_new_service(self) -> impl actix_service::NewService<
+        Request=actix_web::dev::ServiceRequest,
+        Response=actix_web::dev::ServiceResponse,
+        Error=actix_web::Error,
+        Config=(),
+        InitError=(),
+    > {
+
+        use actix_web::dev;
+
+        let inner = move |req: dev::ServiceRequest| {
+            let cloned = self.clone();
+            let (req, payload) = req.into_parts();
+            let rt = payload
+                .map_err(actix_web::Error::from)
+                .fold(actix_web::web::BytesMut::new(), move |mut body, chunk| {
+                    body.extend_from_slice(&chunk);
+                    Ok::<_, actix_web::Error>(body)
+                })
+                .and_then(move |bytes| {
+                    Handler::handle(&cloned, RequestBytes(bytes.freeze()))
+                        .then(|res| match res {
+                            Ok(res_inner) => {
+                                match res_inner {
+                                    ResponseObjects::Empty => 
+                                        Ok(dev::ServiceResponse::new(req, actix_web::HttpResponse::NoContent().finish())),
+                                    json => Ok(dev::ServiceResponse::new(req, actix_web::HttpResponse::Ok().json(json)))
+                                }                    
+                            }
+                            Err(_) => 
+                                Ok(dev::ServiceResponse::new(req, actix_web::HttpResponse::InternalServerError().into()))
+                        })
+                });
+            rt
+        };
+
+        actix_service::service_fn::<_, _, _, ()>(inner)
+    }
+}
+
 // impl<S: 'static, WS: 'static> actix_web::dev::Handler<WS> for Server<S> {
 //     type Result = Box<Future<Item = actix_web::HttpResponse, Error = actix_web::Error>>;
 
@@ -325,26 +366,27 @@ impl<S: 'static + Send + Sync> InnerServer<S> {
 //     }
 // }
 
-impl<S: 'static> actix_web::Responder for Server<S> {
-    type Error = actix_web::Error;
-    type Future = Box<Future<Item = actix_web::HttpResponse, Error = Self::Error>>;
+// impl<S: 'static> actix_web::Responder for Server<S> {
+//     type Error = actix_web::Error;
+//     type Future = Box<Future<Item = actix_web::HttpResponse, Error = Self::Error>>;
     
-    fn respond_to(self, req: &actix_web::HttpRequest) -> Self::Future {
-        use actix_web::FromRequest;
-        let rt = bytes::Bytes::extract(req).into_future().and_then(move |bytes| {
-            Handler::handle(&self, RequestBytes(bytes)).then(|res| match res {
-                Ok(res_inner) => {
-                    match res_inner {
-                        ResponseObjects::Empty => Ok(actix_web::HttpResponse::NoContent().finish()),
-                        json => Ok(actix_web::HttpResponse::Ok().json(json))
-                    }                    
-                }
-                Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
-            })
-        });
-        Box::new(rt)
-    }
-}
+//     fn respond_to(self, req: &actix_web::HttpRequest) -> Self::Future {
+//         use actix_web::FromRequest;
+//         let rt = bytes::Bytes::extract(req).into_future().and_then(move |bytes| {
+//             println!("{:?}", String::from_utf8(bytes.to_vec()));
+//             Handler::handle(&self, RequestBytes(bytes)).then(|res| match res {
+//                 Ok(res_inner) => {
+//                     match res_inner {
+//                         ResponseObjects::Empty => Ok(actix_web::HttpResponse::NoContent().finish()),
+//                         json => Ok(actix_web::HttpResponse::Ok().json(json))
+//                     }                    
+//                 }
+//                 Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
+//             })
+//         });
+//         Box::new(rt)
+//     }
+// }
 
 #[derive(Debug, Deserialize)]
 struct ManyRequestObjects<I>(pub I);
