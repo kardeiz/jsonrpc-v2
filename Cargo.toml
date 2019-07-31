@@ -2,7 +2,7 @@
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
 edition = "2018"
 name = "jsonrpc-v2"
-version = "0.2.3"
+version = "0.3.0"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
@@ -13,21 +13,20 @@ repository = "https://github.com/kardeiz/jsonrpc-v2"
 easy_errors = []
 
 [dependencies]
-actix = "0.7.9"
-bytes = "0.4.11"
-erased-serde = "0.3.8"
-futures = "0.1.27"
-serde_derive = "1.0.85"
+bytes = "0.4"
+erased-serde = "0.3"
+futures = "0.1"
+serde_derive = "1"
 actix-web = "1"
-actix-service = "0.4.0"
+actix-service = "0.4"
 
 [dependencies.serde]
 features = ["derive"]
-version = "1.0.85"
+version = "1"
 
 [dependencies.serde_json]
 features = ["raw_value"]
-version = "1.0.37"
+version = "1"
 
 [dev-dependencies]
 

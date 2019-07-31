@@ -1,3 +1,52 @@
+/*!
+A very small and very fast JSON-RPC 2.0 server-focused framework.
+
+Provides an integration for `actix-web` servers.
+
+# Usage
+
+```rust,no_run
+use jsonrpc_v2::*;
+
+#[derive(serde::Deserialize)]
+struct TwoNums { a: usize, b: usize }
+
+fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+    Ok(params.a + params.b)
+}
+
+fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
+    Ok(params.0 - params.1)
+}
+
+fn message(state: State<String>) -> Result<String, Error> {
+    Ok(String::from(&*state))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    let rpc = Server::with_state(String::from("Hello!"))
+        .with_method("add", add)
+        .with_method("sub", sub)
+        .with_method("message", message)
+        .finish();
+
+    actix_web::HttpServer::new(move || {
+        let rpc = rpc.clone();
+        actix_web::App::new().service(
+            actix_web::web::service("/api")
+                .guard(actix_web::guard::Post())
+                .finish(rpc.into_web_service()),
+        )
+    })
+    .bind("0.0.0.0:3000")?
+    .run()?;
+
+    Ok(())
+}
+```
+*/
+
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 
 use serde_json::{value::RawValue, Value};
@@ -5,29 +54,32 @@ use serde_json::{value::RawValue, Value};
 use std::sync::Arc;
 
 use futures::{
-    future::{ok as future_ok, Either as EitherFuture, Future, IntoFuture},
-    stream::{futures_unordered, Stream}
+    future::{self, Either, Future, IntoFuture},
+    stream::{futures_unordered, Stream},
 };
 
 use std::{collections::HashMap, marker::PhantomData};
 
-use actix::prelude::*;
-
 type BoxedSerialize = Box<erased_serde::Serialize + Send>;
 
+#[doc(hidden)]
 #[derive(Default, Debug)]
 pub struct V2;
 
 impl Serialize for V2 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         "2.0".serialize(serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for V2 {
     fn deserialize<D>(deserializer: D) -> Result<V2, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         let s: &str = Deserialize::deserialize(deserializer)?;
         if s == "2.0" {
             Ok(V2)
@@ -37,30 +89,41 @@ impl<'de> Deserialize<'de> for V2 {
     }
 }
 
+/// Container for the request ID, which can be a string, number, or null.
+/// Not typically used directly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Id {
     Num(i64),
     Str(Box<str>),
-    Null
+    Null,
 }
 
 impl From<i64> for Id {
-    fn from(t: i64) -> Self { Id::Num(t) }
+    fn from(t: i64) -> Self {
+        Id::Num(t)
+    }
 }
 
 impl<'a> From<&'a str> for Id {
-    fn from(t: &'a str) -> Self { Id::Str(t.into()) }
+    fn from(t: &'a str) -> Self {
+        Id::Str(t.into())
+    }
 }
 
 impl From<String> for Id {
-    fn from(t: String) -> Self { Id::Str(t.into()) }
+    fn from(t: String) -> Self {
+        Id::Str(t.into())
+    }
 }
 
 impl Default for Id {
-    fn default() -> Self { Id::Null }
+    fn default() -> Self {
+        Id::Null
+    }
 }
 
+/// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct RequestObject {
@@ -69,78 +132,137 @@ pub struct RequestObject {
     params: Option<Box<RawValue>>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Option<Id>>
+    id: Option<Option<Id>>,
 }
 
 impl RequestObject {
     fn deserialize_id<'de, D>(deserializer: D) -> Result<Option<Option<Id>>, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         Ok(Some(Option::deserialize(deserializer)?))
     }
 }
 
-pub struct WrappedRequestObject<S> {
+#[doc(hidden)]
+pub struct RequestObjectWithState<S> {
     inner: RequestObject,
-    state: Arc<S>
+    state: Arc<S>,
 }
 
+/// [`FromRequest`](trait.FromRequest.html) wrapper for request params
+///
+/// Use a tuple to deserialize by-position params
+/// and a map or deserializable struct for by-name params: e.g.
+///
+/// ```rust,no_run
+/// fn handler(params: Params<(i32, String)>) -> Result<String, Error> { /* ... */ }
+/// ```
 #[derive(Deserialize)]
 pub struct Params<T>(pub T);
 
 impl<T> Params<T>
-where T: DeserializeOwned
+where
+    T: DeserializeOwned,
 {
     fn from_request_inner(req: &RequestObject) -> Result<Self, Error> {
         let res = match req.params {
             Some(ref raw_value) => serde_json::from_str(raw_value.get()),
-            None => serde_json::from_value(Value::Null)
+            None => serde_json::from_value(Value::Null),
         };
         res.map(Params).map_err(|_| Error::INVALID_PARAMS)
     }
 }
 
+/// A trait to extract data from the request
 pub trait FromRequest<S>: Sized {
     type Result: IntoFuture<Item = Self, Error = Error>;
-    fn from_request(req: &WrappedRequestObject<S>) -> Self::Result;
+    fn from_request(req: &RequestObjectWithState<S>) -> Self::Result;
 }
 
 impl<S> FromRequest<S> for () {
     type Result = Result<Self, Error>;
-
-    fn from_request(_: &WrappedRequestObject<S>) -> Self::Result { Ok(()) }
+    fn from_request(_: &RequestObjectWithState<S>) -> Self::Result {
+        Ok(())
+    }
 }
 
+/// A wrapper around the (optional) state object provided when creating the server
 pub struct State<S>(Arc<S>);
 
 impl<S> std::ops::Deref for State<S> {
     type Target = S;
 
-    fn deref(&self) -> &S { &*self.0 }
+    fn deref(&self) -> &S {
+        &*self.0
+    }
 }
 
 impl<S> FromRequest<S> for State<S> {
     type Result = Result<Self, Error>;
 
-    fn from_request(req: &WrappedRequestObject<S>) -> Self::Result {
+    fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
         Ok(State(Arc::clone(&req.state)))
     }
 }
 
-impl<S, T1, T2> FromRequest<S> for (T1, T2) where 
-    T1: FromRequest<S>, 
-    T2: FromRequest<S>,
-    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
-    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static
-    {
-    type Result = Box<Future<Item=(T1, T2), Error=Error>>;
+impl<S, T: DeserializeOwned> FromRequest<S> for Params<T> {
+    type Result = Result<Self, Error>;
+    fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
+        Ok(Self::from_request_inner(&req.inner)?)
+    }
+}
 
-    fn from_request(req: &WrappedRequestObject<S>) -> Self::Result {
-        let rt = T1::from_request(req).into_future()
-            .join(T2::from_request(req));
+impl<S, T1> FromRequest<S> for (T1,)
+where
+    T1: FromRequest<S>,
+    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+{
+    type Result = Box<Future<Item = (T1,), Error = Error>>;
+
+    fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
+        let rt = T1::from_request(req).into_future().map(|x| (x,));
         Box::new(rt)
     }
 }
 
+impl<S, T1, T2> FromRequest<S> for (T1, T2)
+where
+    T1: FromRequest<S>,
+    T2: FromRequest<S>,
+    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+{
+    type Result = Box<Future<Item = (T1, T2), Error = Error>>;
+
+    fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
+        let rt = T1::from_request(req).into_future().join(T2::from_request(req));
+        Box::new(rt)
+    }
+}
+
+impl<S, T1, T2, T3> FromRequest<S> for (T1, T2, T3)
+where
+    T1: FromRequest<S>,
+    T2: FromRequest<S>,
+    T3: FromRequest<S>,
+    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    <<T3 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+{
+    type Result = Box<Future<Item = (T1, T2, T3), Error = Error>>;
+
+    fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
+        let rt = Future::join3(
+            T1::from_request(req).into_future(),
+            T2::from_request(req),
+            T3::from_request(req),
+        );
+        Box::new(rt)
+    }
+}
+
+/// Error object in a response
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum Error {
@@ -148,120 +270,196 @@ pub enum Error {
         code: i64,
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        data: Option<BoxedSerialize>
+        data: Option<BoxedSerialize>,
     },
-    PreDef {
+    Provided {
         code: i64,
-        message: &'static str
-    }
+        message: &'static str,
+    },
 }
 
 impl Error {
-    pub const INVALID_PARAMS: Self = Error::PreDef { code: -32602, message: "Invalid params" };
-    pub const INVALID_REQUEST: Self = Error::PreDef { code: -32600, message: "Invalid Request" };
-    pub const METHOD_NOT_FOUND: Self = Error::PreDef { code: -32601, message: "Method not found" };
-    pub const PARSE_ERROR: Self = Error::PreDef { code: -32700, message: "Parse error" };
+    pub const INVALID_PARAMS: Self = Error::Provided { code: -32602, message: "Invalid params" };
+    pub const INVALID_REQUEST: Self = Error::Provided { code: -32600, message: "Invalid Request" };
+    pub const METHOD_NOT_FOUND: Self =
+        Error::Provided { code: -32601, message: "Method not found" };
+    pub const PARSE_ERROR: Self = Error::Provided { code: -32700, message: "Parse error" };
 }
 
-pub trait ErrorLike {
-    fn code(&self) -> i64;
-    fn message(&self) -> String;
-    fn data(&self) -> Option<BoxedSerialize> { None }
+/// Trait that can be used to map custom errors to the [`Error`](enum.Error.html) object.
+pub trait ErrorLike: std::fmt::Display {
+    /// Code to be used in JSON-RPC 2.0 Error object. Default is 0.
+    fn code(&self) -> i64 {
+        0
+    }
+
+    /// Message to be used in JSON-RPC 2.0 Error object. Default is the `Display` value of the item.
+    fn message(&self) -> String {
+        self.to_string()
+    }
+
+    /// Any additional data to be sent with the error. Default is `None`.
+    fn data(&self) -> Option<BoxedSerialize> {
+        None
+    }
 }
 
 impl<T> From<T> for Error
-where T: ErrorLike
+where
+    T: ErrorLike,
 {
-    fn from(t: T) -> Error { Error::Full { code: t.code(), message: t.message(), data: t.data() } }
+    fn from(t: T) -> Error {
+        Error::Full { code: t.code(), message: t.message(), data: t.data() }
+    }
 }
 
 #[cfg(feature = "easy_errors")]
-impl<T> ErrorLike for T
-where T: std::fmt::Display
-{
-    fn code(&self) -> i64 { 0 }
+impl<T> ErrorLike for T where T: std::fmt::Display {}
 
-    fn message(&self) -> String { self.to_string() }
-}
-
+/// The individual response object
 #[derive(Serialize)]
 #[serde(untagged)]
-pub enum Response {
+pub enum ResponseObject {
     Result { jsonrpc: V2, result: BoxedSerialize, id: Id },
-    Error { jsonrpc: V2, error: Error, id: Id }
+    Error { jsonrpc: V2, error: Error, id: Id },
 }
 
-impl Response {
+impl ResponseObject {
     fn result(result: BoxedSerialize, id: Id) -> Self {
-        Response::Result { jsonrpc: V2, result, id }
+        ResponseObject::Result { jsonrpc: V2, result, id }
     }
 
-    fn error(error: Error, id: Id) -> Self { Response::Error { jsonrpc: V2, error, id } }
+    fn error(error: Error, id: Id) -> Self {
+        ResponseObject::Error { jsonrpc: V2, error, id }
+    }
 }
 
-pub struct With<T, S, P> {
-    handler: Arc<
-        Fn(Params<P>, T) -> Box<Future<Item = BoxedSerialize, Error = Error>>
-            + 'static
-            + Send
-            + Sync
-    >,
-    _s: PhantomData<S>
-}
-
-impl<S, P, FN, I, E, FS, T> From<FN> for With<T, S, P>
+#[doc(hidden)]
+pub trait Factory<STATE, I, S, E, T>: Clone
 where
-    T: FromRequest<S> + 'static,
-    S: 'static,
-    P: DeserializeOwned,
-    FN: Fn(Params<P>, T) -> I + 'static + Send + Sync,
-    I: IntoFuture<Item = FS, Error = E> + 'static,
-    I::Future: 'static,
-    FS: Serialize + Send + 'static,
-    E: Into<Error>
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
 {
-    fn from(u: FN) -> Self {
-        let handler = move |params, t| {
-            let rt = (u)(params, t)
-                .into_future()
-                .map_err(|e| e.into())
-                .map(|res| Box::new(res) as BoxedSerialize);
+    fn call(&self, param: T) -> I;
+}
 
+#[doc(hidden)]
+struct Handler<F, STATE, I, S, E, T>
+where
+    F: Factory<STATE, I, S, E, T>,
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+{
+    hnd: F,
+    _t: PhantomData<fn() -> (STATE, I, S, E, T)>,
+}
+
+impl<F, STATE, I, S, E, T> Handler<F, STATE, I, S, E, T>
+where
+    F: Factory<STATE, I, S, E, T>,
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+{
+    fn new(hnd: F) -> Self {
+        Handler { hnd, _t: PhantomData }
+    }
+}
+
+impl<FUNC, STATE, I, S, E> Factory<STATE, I, S, E, ()> for FUNC
+where
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+    FUNC: Fn() -> I + Clone,
+{
+    fn call(&self, _: ()) -> I {
+        (self)()
+    }
+}
+
+impl<FUNC, STATE, I, S, E, T1> Factory<STATE, I, S, E, (T1,)> for FUNC
+where
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+    FUNC: Fn(T1) -> I + Clone,
+{
+    fn call(&self, param: (T1,)) -> I {
+        (self)(param.0)
+    }
+}
+
+impl<FUNC, STATE, I, S, E, T1, T2> Factory<STATE, I, S, E, (T1, T2)> for FUNC
+where
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+    FUNC: Fn(T1, T2) -> I + Clone,
+{
+    fn call(&self, param: (T1, T2)) -> I {
+        (self)(param.0, param.1)
+    }
+}
+
+impl<FUNC, STATE, I, S, E, T1, T2, T3> Factory<STATE, I, S, E, (T1, T2, T3)> for FUNC
+where
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+    FUNC: Fn(T1, T2, T3) -> I + Clone,
+{
+    fn call(&self, param: (T1, T2, T3)) -> I {
+        (self)(param.0, param.1, param.2)
+    }
+}
+
+impl<F, STATE, I, S, E, T> From<Handler<F, STATE, I, S, E, T>> for BoxedHandler<STATE>
+where
+    F: Factory<STATE, I, S, E, T> + 'static + Send + Sync,
+    STATE: 'static,
+    I: IntoFuture<Item = S, Error = E> + 'static,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
+    E: 'static,
+    T: FromRequest<STATE> + 'static,
+    <<T as FromRequest<STATE>>::Result as IntoFuture>::Future: 'static,
+{
+    fn from(t: Handler<F, STATE, I, S, E, T>) -> BoxedHandler<STATE> {
+        let arc = Arc::new(t.hnd);
+
+        let inner = move |req: RequestObjectWithState<STATE>| {
+            let cloned = Arc::clone(&arc);
+            let rt = T::from_request(&req)
+                .into_future()
+                .and_then(move |param| cloned.call(param).into_future().map_err(Error::from))
+                .map(|s| Box::new(s) as BoxedSerialize);
             Box::new(rt) as Box<Future<Item = BoxedSerialize, Error = Error>>
         };
-        With { handler: Arc::new(handler), _s: PhantomData }
+
+        BoxedHandler(Box::new(inner))
     }
 }
 
-trait Method<S>: 'static + Send + Sync {
-    fn handle(
-        &self,
-        req: &WrappedRequestObject<S>
-    ) -> Box<Future<Item = BoxedSerialize, Error = Error>>;
-}
+struct BoxedHandler<STATE>(
+    Box<
+        Fn(RequestObjectWithState<STATE>) -> Box<Future<Item = BoxedSerialize, Error = Error>>
+            + Send
+            + Sync,
+    >,
+);
 
-impl<T, S, P> Method<S> for With<T, S, P>
-where
-    T: FromRequest<S> + 'static,
-    P: DeserializeOwned,
-    P: 'static + Send + Sync,
-    S: 'static + Send + Sync
-{
-    fn handle(
-        &self,
-        req: &WrappedRequestObject<S>
-    ) -> Box<Future<Item = BoxedSerialize, Error = Error>>
-    {
-        let handler = Arc::clone(&self.handler);
-        let fut = Params::from_request_inner(&req.inner)
-            .into_future()
-            .join(T::from_request(req))
-            .and_then(move |(params, t)| handler(params, t));
-        Box::new(fut)
-    }
-}
-
-pub struct Server<S>(Arc<InnerServer<S>>);
+/// Server/request handler
+pub struct Server<S>(Arc<ServerBuilder<S>>);
 
 impl<S> Clone for Server<S> {
     fn clone(&self) -> Self {
@@ -269,132 +467,62 @@ impl<S> Clone for Server<S> {
     }
 }
 
-pub struct InnerServer<S> {
+/// Builder used to add methods to a server
+///
+/// Created with `Server::new` or `Server::with_state`
+pub struct ServerBuilder<S> {
     state: Arc<S>,
-    methods: HashMap<String, Box<Method<S>>>
-}
-
-impl Default for InnerServer<()> {
-    fn default() -> Self { InnerServer { state: Arc::new(()), methods: HashMap::new() } }
+    methods: HashMap<String, BoxedHandler<S>>,
 }
 
 impl Server<()> {
-    pub fn new() -> InnerServer<()> { InnerServer::default() }
-}
-
-impl<S: 'static + Send + Sync> Server<S> {
-    pub fn with_state(state: S) -> InnerServer<S> {
-        InnerServer { state: Arc::new(state), methods: HashMap::new() }
+    /// Create a new server with empty state (`()`)
+    pub fn new() -> ServerBuilder<()> {
+        ServerBuilder { state: Arc::new(()), methods: HashMap::new() }
     }
 }
 
-impl<S: 'static + Send + Sync> InnerServer<S> {
-    pub fn with_method<F, I, T, P>(mut self, name: I, handler: F) -> Self
-        where
-            T: FromRequest<S> + 'static,
-            P: DeserializeOwned + 'static + Send + Sync,
-            F: Into<With<T, S, P>>,
-            I: Into<String> {
-            self.methods.insert(name.into(), Box::new(handler.into()));
-            self
-        }
+impl<S: 'static + Send + Sync> Server<S> {
+    /// Create a new server with the given state
+    pub fn with_state(state: S) -> ServerBuilder<S> {
+        ServerBuilder { state: Arc::new(state), methods: HashMap::new() }
+    }
+}
 
-    pub fn finish(self) -> Server<S> {
+impl<STATE: 'static + Send + Sync> ServerBuilder<STATE> {
+    /// Add a method and handler to the server
+    ///
+    /// The method can be a function that takes up to 3 [`FromRequest`](trait.FromRequest.html) items
+    /// and returns a value that can be resolved to a future of a serializable object, e.g.:
+    ///
+    /// ```rust,no_run
+    /// fn handle(params: Params<(i32, String)>, state: State<HashMap<String, String>>) -> Result<String, Error> { /* ... */ }
+    /// ```
+    pub fn with_method<N, I, S, E, F, T>(mut self, name: N, handler: F) -> Self
+    where
+        N: Into<String>,
+        F: Factory<STATE, I, S, E, T> + Send + Sync + 'static,
+        I: IntoFuture<Item = S, Error = E> + 'static,
+        S: Serialize + Send + 'static,
+        Error: From<E>,
+        E: 'static,
+        T: FromRequest<STATE> + 'static,
+        <<T as FromRequest<STATE>>::Result as IntoFuture>::Future: 'static,
+    {
+        self.methods.insert(name.into(), Handler::new(handler).into());
+        self
+    }
+
+    /// Convert the server builder into the finished struct
+    pub fn finish(self) -> Server<STATE> {
         Server(Arc::new(self))
     }
 }
 
-impl<S: 'static + Send + Sync> Server<S> {
-    pub fn into_new_service(self) -> impl actix_service::NewService<
-        Request=actix_web::dev::ServiceRequest,
-        Response=actix_web::dev::ServiceResponse,
-        Error=actix_web::Error,
-        Config=(),
-        InitError=(),
-    > {
-
-        use actix_web::dev;
-
-        let inner = move |req: dev::ServiceRequest| {
-            let cloned = self.clone();
-            let (req, payload) = req.into_parts();
-            let rt = payload
-                .map_err(actix_web::Error::from)
-                .fold(actix_web::web::BytesMut::new(), move |mut body, chunk| {
-                    body.extend_from_slice(&chunk);
-                    Ok::<_, actix_web::Error>(body)
-                })
-                .and_then(move |bytes| {
-                    Handler::handle(&cloned, RequestBytes(bytes.freeze()))
-                        .then(|res| match res {
-                            Ok(res_inner) => {
-                                match res_inner {
-                                    ResponseObjects::Empty => 
-                                        Ok(dev::ServiceResponse::new(req, actix_web::HttpResponse::NoContent().finish())),
-                                    json => Ok(dev::ServiceResponse::new(req, actix_web::HttpResponse::Ok().json(json)))
-                                }                    
-                            }
-                            Err(_) => 
-                                Ok(dev::ServiceResponse::new(req, actix_web::HttpResponse::InternalServerError().into()))
-                        })
-                });
-            rt
-        };
-
-        actix_service::service_fn::<_, _, _, ()>(inner)
-    }
-}
-
-// impl<S: 'static, WS: 'static> actix_web::dev::Handler<WS> for Server<S> {
-//     type Result = Box<Future<Item = actix_web::HttpResponse, Error = actix_web::Error>>;
-
-//     fn handle(&self, req: &actix_web::HttpRequest<WS>) -> Self::Result {
-//         use actix_web::FromRequest;
-//         let cloned = self.clone();
-//         let rt = bytes::Bytes::extract(req).into_future().and_then(|x| x).and_then(move |bytes| {
-//             Handler::handle(&cloned, RequestBytes(bytes)).then(|res| match res {
-//                 Ok(res_inner) => {
-//                     match res_inner {
-//                         ResponseObjects::Empty => Ok(actix_web::HttpResponse::NoContent().finish()),
-//                         json => Ok(actix_web::HttpResponse::Ok().json(json))
-//                     }                    
-//                 }
-//                 Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
-//             })
-//         });
-//         Box::new(rt)
-//     }
-// }
-
-// impl<S: 'static> actix_web::Responder for Server<S> {
-//     type Error = actix_web::Error;
-//     type Future = Box<Future<Item = actix_web::HttpResponse, Error = Self::Error>>;
-    
-//     fn respond_to(self, req: &actix_web::HttpRequest) -> Self::Future {
-//         use actix_web::FromRequest;
-//         let rt = bytes::Bytes::extract(req).into_future().and_then(move |bytes| {
-//             println!("{:?}", String::from_utf8(bytes.to_vec()));
-//             Handler::handle(&self, RequestBytes(bytes)).then(|res| match res {
-//                 Ok(res_inner) => {
-//                     match res_inner {
-//                         ResponseObjects::Empty => Ok(actix_web::HttpResponse::NoContent().finish()),
-//                         json => Ok(actix_web::HttpResponse::Ok().json(json))
-//                     }                    
-//                 }
-//                 Err(_) => Ok(actix_web::HttpResponse::InternalServerError().into())
-//             })
-//         });
-//         Box::new(rt)
-//     }
-// }
-
-#[derive(Debug, Deserialize)]
-struct ManyRequestObjects<I>(pub I);
-
 #[derive(Debug)]
 enum OneOrManyRawValues<'a> {
     Many(Vec<&'a RawValue>),
-    One(&'a RawValue)
+    One(&'a RawValue),
 }
 
 impl<'a> OneOrManyRawValues<'a> {
@@ -407,117 +535,210 @@ impl<'a> OneOrManyRawValues<'a> {
     }
 }
 
+/// Container for the response object(s) or `Empty` for notification request(s)
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum ResponseObjects {
-    One(Response),
-    Many(Vec<Response>),
-    Empty
+    One(ResponseObject),
+    Many(Vec<ResponseObject>),
+    Empty,
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
-pub enum ManyResponseObjects {
-    Many(Vec<Response>),
-    Empty
+enum ManyResponseObjects {
+    Many(Vec<ResponseObject>),
+    Empty,
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
-pub enum ResponseObject {
-    One(Response),
-    Empty
+enum SingleResponseObject {
+    One(ResponseObject),
+    Empty,
 }
 
-impl ResponseObject {
+impl From<ManyResponseObjects> for ResponseObjects {
+    fn from(t: ManyResponseObjects) -> Self {
+        match t {
+            ManyResponseObjects::Many(many) => ResponseObjects::Many(many),
+            ManyResponseObjects::Empty => ResponseObjects::Empty,
+        }
+    }
+}
+
+impl From<SingleResponseObject> for ResponseObjects {
+    fn from(t: SingleResponseObject) -> Self {
+        match t {
+            SingleResponseObject::One(one) => ResponseObjects::One(one),
+            SingleResponseObject::Empty => ResponseObjects::Empty,
+        }
+    }
+}
+
+impl SingleResponseObject {
     fn result(result: BoxedSerialize, opt_id: Option<Id>) -> Self {
         opt_id
-            .map(|id| ResponseObject::One(Response::result(result, id)))
-            .unwrap_or_else(|| ResponseObject::Empty)
+            .map(|id| SingleResponseObject::One(ResponseObject::result(result, id)))
+            .unwrap_or_else(|| SingleResponseObject::Empty)
     }
 
     fn error(error: Error, opt_id: Option<Id>) -> Self {
         opt_id
-            .map(|id| ResponseObject::One(Response::error(error, id)))
-            .unwrap_or_else(|| ResponseObject::Empty)
+            .map(|id| SingleResponseObject::One(ResponseObject::error(error, id)))
+            .unwrap_or_else(|| SingleResponseObject::Empty)
     }
 }
 
-pub trait Handler<M> {
-    type Result: 'static;
-    fn handle(&self, msg: M) -> Self::Result;
+/// An enum to contain the different kinds of possible requests: using the provided
+/// [`RequestObject`](struct.RequestObject.html), an array of `RequestObject`s, or raw bytes.
+///
+/// Typically not use directly, [`Server::handle`](struct.Server.html#method.handle) can take the individual variants
+pub enum RequestKind {
+    RequestObject(RequestObject),
+    ManyRequestObjects(Vec<RequestObject>),
+    Bytes(bytes::Bytes),
 }
 
-pub struct RequestBytes(pub bytes::Bytes);
+impl From<RequestObject> for RequestKind {
+    fn from(t: RequestObject) -> Self {
+        RequestKind::RequestObject(t)
+    }
+}
 
-impl<S> Handler<RequestObject> for Server<S>
-where S: 'static
+impl From<Vec<RequestObject>> for RequestKind {
+    fn from(t: Vec<RequestObject>) -> Self {
+        RequestKind::ManyRequestObjects(t)
+    }
+}
+
+impl From<bytes::Bytes> for RequestKind {
+    fn from(t: bytes::Bytes) -> Self {
+        RequestKind::Bytes(t)
+    }
+}
+
+impl<'a> From<&'a [u8]> for RequestKind {
+    fn from(t: &'a [u8]) -> Self {
+        bytes::Bytes::from(t).into()
+    }
+}
+
+impl<S> Server<S>
+where
+    S: 'static,
 {
-    type Result = Box<Future<Item = ResponseObject, Error = ()>>;
+    /// Handle requests, and return appropriate responses
+    pub fn handle<I: Into<RequestKind>>(
+        &self,
+        req: I,
+    ) -> impl Future<Item = ResponseObjects, Error = ()> {
+        match req.into() {
+            RequestKind::Bytes(bytes) => Either::A(self.handle_bytes(bytes)),
+            RequestKind::RequestObject(req) => {
+                Either::B(Either::A(self.handle_request_object(req).map(From::from)))
+            }
+            RequestKind::ManyRequestObjects(reqs) => {
+                Either::B(Either::B(self.handle_many_request_objects(reqs).map(From::from)))
+            }
+        }
+    }
 
-    fn handle(&self, msg: RequestObject) -> Self::Result {
-        let req = WrappedRequestObject { inner: msg, state: Arc::clone(&self.0.state) };
+    /// Converts the server into an `actix-web` compatible `NewService`
+    pub fn into_web_service(
+        self,
+    ) -> impl actix_service::NewService<
+        Request = actix_web::dev::ServiceRequest,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+        Config = (),
+        InitError = (),
+    > {
+        let inner = move |req: actix_web::dev::ServiceRequest| {
+            let cloned = self.clone();
+            let (req, payload) = req.into_parts();
+            let rt = payload
+                .map_err(actix_web::Error::from)
+                .fold(actix_web::web::BytesMut::new(), move |mut body, chunk| {
+                    body.extend_from_slice(&chunk);
+                    Ok::<_, actix_web::Error>(body)
+                })
+                .and_then(move |bytes| {
+                    cloned.handle_bytes(bytes.freeze()).then(|res| match res {
+                        Ok(res_inner) => match res_inner {
+                            ResponseObjects::Empty => Ok(actix_web::dev::ServiceResponse::new(
+                                req,
+                                actix_web::HttpResponse::NoContent().finish(),
+                            )),
+                            json => Ok(actix_web::dev::ServiceResponse::new(
+                                req,
+                                actix_web::HttpResponse::Ok().json(json),
+                            )),
+                        },
+                        Err(_) => Ok(actix_web::dev::ServiceResponse::new(
+                            req,
+                            actix_web::HttpResponse::InternalServerError().into(),
+                        )),
+                    })
+                });
+            rt
+        };
+
+        actix_service::service_fn::<_, _, _, ()>(inner)
+    }
+
+    fn handle_request_object(
+        &self,
+        req: RequestObject,
+    ) -> impl Future<Item = SingleResponseObject, Error = ()> {
+        let req = RequestObjectWithState { inner: req, state: Arc::clone(&self.0.state) };
 
         let opt_id = match req.inner.id {
             Some(Some(ref id)) => Some(id.clone()),
             Some(None) => Some(Id::Null),
-            None => None
+            None => None,
         };
 
         let rt = if let Some(method) = self.0.methods.get(req.inner.method.as_ref()) {
-            let rt = method.handle(&req).then(|fut| match fut {
-                Ok(val) => future_ok(ResponseObject::result(val, opt_id)),
-                Err(e) => future_ok(ResponseObject::error(e, opt_id))
+            let rt = (&method.0)(req).then(|fut| match fut {
+                Ok(val) => future::ok(SingleResponseObject::result(val, opt_id)),
+                Err(e) => future::ok(SingleResponseObject::error(e, opt_id)),
             });
-            EitherFuture::A(rt)
+            Either::A(rt)
         } else {
-            let rt = future_ok(ResponseObject::error(Error::METHOD_NOT_FOUND, opt_id));
-            EitherFuture::B(rt)
+            let rt = future::ok(SingleResponseObject::error(Error::METHOD_NOT_FOUND, opt_id));
+            Either::B(rt)
         };
 
-        Box::new(rt)
+        rt
     }
-}
 
-impl<S, I> Handler<ManyRequestObjects<I>> for Server<S>
-where
-    S: 'static,
-    I: IntoIterator<Item = RequestObject>
-{
-    type Result = Box<Future<Item = ManyResponseObjects, Error = ()>>;
-
-    fn handle(&self, msg: ManyRequestObjects<I>) -> Self::Result {
-        Box::new(
-            futures_unordered(msg.0.into_iter().map(|r| self.handle(r)))
-                .filter_map(|res| match res {
-                    ResponseObject::One(r) => Some(r),
-                    _ => None
-                })
-                .collect()
-                .map(|vec| {
-                    if vec.is_empty() {
-                        ManyResponseObjects::Empty
-                    } else {
-                        ManyResponseObjects::Many(vec)
-                    }
-                })
-        )
+    fn handle_many_request_objects<I: IntoIterator<Item = RequestObject>>(
+        &self,
+        reqs: I,
+    ) -> impl Future<Item = ManyResponseObjects, Error = ()> {
+        futures_unordered(reqs.into_iter().map(|r| self.handle_request_object(r)))
+            .filter_map(|res| match res {
+                SingleResponseObject::One(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+            .map(|vec| {
+                if vec.is_empty() {
+                    ManyResponseObjects::Empty
+                } else {
+                    ManyResponseObjects::Many(vec)
+                }
+            })
     }
-}
 
-impl<S> Handler<RequestBytes> for Server<S>
-where S: 'static
-{
-    type Result = Box<Future<Item = ResponseObjects, Error = ()>>;
-
-    fn handle(&self, msg: RequestBytes) -> Self::Result {
-        if let Ok(raw_values) = OneOrManyRawValues::try_from_slice(msg.0.as_ref()) {
+    fn handle_bytes(&self, bytes: bytes::Bytes) -> impl Future<Item = ResponseObjects, Error = ()> {
+        if let Ok(raw_values) = OneOrManyRawValues::try_from_slice(bytes.as_ref()) {
             match raw_values {
                 OneOrManyRawValues::Many(raw_reqs) => {
                     if raw_reqs.is_empty() {
-                        return Box::new(future_ok(ResponseObjects::One(Response::error(
-                            Error::INVALID_REQUEST,
-                            Id::Null
+                        return Either::A(Either::A(future::ok(ResponseObjects::One(
+                            ResponseObject::error(Error::INVALID_REQUEST, Id::Null),
                         ))));
                     }
 
@@ -528,12 +749,12 @@ where S: 'static
 
                     let errs = errs
                         .into_iter()
-                        .map(|_| Response::error(Error::INVALID_REQUEST, Id::Null))
+                        .map(|_| ResponseObject::error(Error::INVALID_REQUEST, Id::Null))
                         .collect::<Vec<_>>();
 
-                    return Box::new(
-                        self.handle(ManyRequestObjects(okays.into_iter().flat_map(|x| x)))
-                            .map(|res| match res {
+                    return Either::A(Either::B(
+                        self.handle_many_request_objects(okays.into_iter().flat_map(|x| x)).map(
+                            |res| match res {
                                 ManyResponseObjects::Many(mut many) => {
                                     many.extend(errs);
                                     ResponseObjects::Many(many)
@@ -545,24 +766,27 @@ where S: 'static
                                         ResponseObjects::Many(errs)
                                     }
                                 }
-                            })
-                    );
+                            },
+                        ),
+                    ));
                 }
                 OneOrManyRawValues::One(raw_req) => {
-                    return Box::new(match serde_json::from_str::<RequestObject>(raw_req.get()) {
-                        Ok(rn) => EitherFuture::A(self.handle(rn).map(|res| match res {
-                            ResponseObject::One(r) => ResponseObjects::One(r),
-                            _ => ResponseObjects::Empty
+                    return Either::B(match serde_json::from_str::<RequestObject>(raw_req.get()) {
+                        Ok(rn) => Either::A(self.handle_request_object(rn).map(|res| match res {
+                            SingleResponseObject::One(r) => ResponseObjects::One(r),
+                            _ => ResponseObjects::Empty,
                         })),
-                        Err(_) => EitherFuture::B(future_ok(ResponseObjects::One(Response::error(
-                            Error::INVALID_REQUEST,
-                            Id::Null
-                        ))))
+                        Err(_) => Either::B(future::ok(ResponseObjects::One(
+                            ResponseObject::error(Error::INVALID_REQUEST, Id::Null),
+                        ))),
                     });
                 }
             }
         }
 
-        Box::new(future_ok(ResponseObjects::One(Response::error(Error::PARSE_ERROR, Id::Null))))
+        Either::A(Either::A(future::ok(ResponseObjects::One(ResponseObject::error(
+            Error::PARSE_ERROR,
+            Id::Null,
+        )))))
     }
 }

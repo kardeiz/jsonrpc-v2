@@ -1,43 +1,40 @@
-use actix::prelude::*;
-use futures::future::Future;
 use jsonrpc_v2::*;
 
-use futures::future::IntoFuture;
-
-fn add(Params(params): Params<(usize, usize)>, state: State<AppState>) -> Result<usize, Error> {
-    Ok(params.0 + params.1 + state.num)
+#[derive(serde::Deserialize)]
+struct TwoNums {
+    a: usize,
+    b: usize,
 }
 
-fn forty_two(_params: Params<()>, ctx: (State<AppState>, ())) -> Result<usize, Error> { Err(42.into()) }
-
-pub struct AppState {
-    num: usize
+fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+    Ok(params.a + params.b)
 }
 
+fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
+    Ok(params.0 - params.1)
+}
 
-fn static_fn(req: actix_web::HttpRequest) -> actix_web::HttpResponse { 
-    let json = serde_json::json!{{
-        "jsonrpc": "2.0", "result": 26, "id": null
-    }};
-    actix_web::HttpResponse::Ok().json(json)
+fn message(state: State<String>) -> Result<String, Error> {
+    Ok(String::from(&*state))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
-    let rpc = Server::with_state(AppState { num: 23 })
-        .with_method("forty_two", forty_two)
+    let rpc = Server::with_state(String::from("Hello!"))
         .with_method("add", add)
+        .with_method("sub", sub)
+        .with_method("message", message)
         .finish();
 
-    actix_web::server::new(move || {
+    actix_web::HttpServer::new(move || {
         let rpc = rpc.clone();
-        let json_only = actix_web::pred::Header("Content-Type", "application/json");
-        actix_web::App::new()
-            .resource("/api", |r| r.post().filter(json_only).h(rpc))
-            .route("/static", actix_web::http::Method::GET, static_fn)
+        actix_web::App::new().service(
+            actix_web::web::service("/api")
+                .guard(actix_web::guard::Post())
+                .finish(rpc.into_web_service()),
+        )
     })
     .bind("0.0.0.0:3000")?
-    .run();
+    .run()?;
 
     Ok(())
 }
