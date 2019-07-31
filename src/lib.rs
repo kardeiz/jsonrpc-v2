@@ -63,6 +63,19 @@ use std::{collections::HashMap, marker::PhantomData};
 type BoxedSerialize = Box<erased_serde::Serialize + Send>;
 
 #[doc(hidden)]
+#[derive(Debug)]
+pub struct MethodMissing;
+
+impl std::fmt::Display for MethodMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        "Cannot build request object with missing method".fmt(f)
+    }
+}
+
+impl std::error::Error for MethodMissing {}
+
+
+#[doc(hidden)]
 #[derive(Default, Debug)]
 pub struct V2;
 
@@ -123,19 +136,91 @@ impl Default for Id {
     }
 }
 
+/// Builder struct for a request object
+#[derive(Default)]
+pub struct RequestBuilder {
+    method: Option<String>,
+    params: Option<Value>,
+    id: Id
+}
+
+/// Builder struct for a notification request object
+#[derive(Default)]
+pub struct NotificationBuilder {
+    method: Option<String>,
+    params: Option<Value>,
+}
+
+impl RequestBuilder {
+    pub fn with_id<I: Into<Id>>(mut self, id: I) -> Self {
+        self.id = id.into();
+        self
+    }
+    pub fn with_method<I: Into<String>>(mut self, method: I) -> Self {
+        self.method = Some(method.into());
+        self
+    }
+    pub fn with_params<I: Into<Value>>(mut self, params: I) -> Self {
+        self.params = Some(params.into());
+        self
+    }
+    pub fn finish(self) -> Result<RequestObject, MethodMissing> {
+        let RequestBuilder { method, params, id } = self;
+        match method {
+            Some(method) => Ok(RequestObject { 
+                jsonrpc: V2, 
+                method: method.into_boxed_str(),
+                params,
+                id: Some(Some(id))
+            }),
+            None => Err(MethodMissing)
+        }
+    }
+}
+
+impl NotificationBuilder {
+    pub fn with_method<I: Into<String>>(mut self, method: I) -> Self {
+        self.method = Some(method.into());
+        self
+    }
+    pub fn with_params<I: Into<Value>>(mut self, params: I) -> Self {
+        self.params = Some(params.into());
+        self
+    }
+    pub fn finish(self) -> Result<RequestObject, MethodMissing> {
+        let NotificationBuilder { method, params } = self;
+        match method {
+            Some(method) => Ok(RequestObject { 
+                jsonrpc: V2, 
+                method: method.into_boxed_str(),
+                params,
+                id: None
+            }),
+            None => Err(MethodMissing)
+        }
+    }
+}
+
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct RequestObject {
     jsonrpc: V2,
     method: Box<str>,
-    params: Option<Box<RawValue>>,
+    params: Option<Value>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<Option<Id>>,
 }
 
 impl RequestObject {
+    
+    /// Build a new request object
+    pub fn request() -> RequestBuilder { RequestBuilder::default() }
+
+    /// Build a new notification request object
+    pub fn notification() -> NotificationBuilder { NotificationBuilder::default() }
+
     fn deserialize_id<'de, D>(deserializer: D) -> Result<Option<Option<Id>>, D::Error>
     where
         D: Deserializer<'de>,
@@ -167,7 +252,7 @@ where
 {
     fn from_request_inner(req: &RequestObject) -> Result<Self, Error> {
         let res = match req.params {
-            Some(ref raw_value) => serde_json::from_str(raw_value.get()),
+            Some(ref value) => serde_json::from_value(value.clone()),
             None => serde_json::from_value(Value::Null),
         };
         res.map(Params).map_err(|_| Error::INVALID_PARAMS)
@@ -259,78 +344,6 @@ where
             T3::from_request(req),
         );
         Box::new(rt)
-    }
-}
-
-/// Error object in a response
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum Error {
-    Full {
-        code: i64,
-        message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        data: Option<BoxedSerialize>,
-    },
-    Provided {
-        code: i64,
-        message: &'static str,
-    },
-}
-
-impl Error {
-    pub const INVALID_PARAMS: Self = Error::Provided { code: -32602, message: "Invalid params" };
-    pub const INVALID_REQUEST: Self = Error::Provided { code: -32600, message: "Invalid Request" };
-    pub const METHOD_NOT_FOUND: Self =
-        Error::Provided { code: -32601, message: "Method not found" };
-    pub const PARSE_ERROR: Self = Error::Provided { code: -32700, message: "Parse error" };
-}
-
-/// Trait that can be used to map custom errors to the [`Error`](enum.Error.html) object.
-pub trait ErrorLike: std::fmt::Display {
-    /// Code to be used in JSON-RPC 2.0 Error object. Default is 0.
-    fn code(&self) -> i64 {
-        0
-    }
-
-    /// Message to be used in JSON-RPC 2.0 Error object. Default is the `Display` value of the item.
-    fn message(&self) -> String {
-        self.to_string()
-    }
-
-    /// Any additional data to be sent with the error. Default is `None`.
-    fn data(&self) -> Option<BoxedSerialize> {
-        None
-    }
-}
-
-impl<T> From<T> for Error
-where
-    T: ErrorLike,
-{
-    fn from(t: T) -> Error {
-        Error::Full { code: t.code(), message: t.message(), data: t.data() }
-    }
-}
-
-#[cfg(feature = "easy_errors")]
-impl<T> ErrorLike for T where T: std::fmt::Display {}
-
-/// The individual response object
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum ResponseObject {
-    Result { jsonrpc: V2, result: BoxedSerialize, id: Id },
-    Error { jsonrpc: V2, error: Error, id: Id },
-}
-
-impl ResponseObject {
-    fn result(result: BoxedSerialize, id: Id) -> Self {
-        ResponseObject::Result { jsonrpc: V2, result, id }
-    }
-
-    fn error(error: Error, id: Id) -> Self {
-        ResponseObject::Error { jsonrpc: V2, error, id }
     }
 }
 
@@ -519,19 +532,75 @@ impl<STATE: 'static + Send + Sync> ServerBuilder<STATE> {
     }
 }
 
-#[derive(Debug)]
-enum OneOrManyRawValues<'a> {
-    Many(Vec<&'a RawValue>),
-    One(&'a RawValue),
+/// Error object in a response
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum Error {
+    Full {
+        code: i64,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<BoxedSerialize>,
+    },
+    Provided {
+        code: i64,
+        message: &'static str,
+    },
 }
 
-impl<'a> OneOrManyRawValues<'a> {
-    pub fn try_from_slice(slice: &'a [u8]) -> Result<Self, serde_json::Error> {
-        if slice.first() == Some(&b'[') {
-            Ok(OneOrManyRawValues::Many(serde_json::from_slice::<Vec<&RawValue>>(slice)?))
-        } else {
-            Ok(OneOrManyRawValues::One(serde_json::from_slice::<&RawValue>(slice)?))
-        }
+impl Error {
+    pub const INVALID_PARAMS: Self = Error::Provided { code: -32602, message: "Invalid params" };
+    pub const INVALID_REQUEST: Self = Error::Provided { code: -32600, message: "Invalid Request" };
+    pub const METHOD_NOT_FOUND: Self =
+        Error::Provided { code: -32601, message: "Method not found" };
+    pub const PARSE_ERROR: Self = Error::Provided { code: -32700, message: "Parse error" };
+}
+
+/// Trait that can be used to map custom errors to the [`Error`](enum.Error.html) object.
+pub trait ErrorLike: std::fmt::Display {
+    /// Code to be used in JSON-RPC 2.0 Error object. Default is 0.
+    fn code(&self) -> i64 {
+        0
+    }
+
+    /// Message to be used in JSON-RPC 2.0 Error object. Default is the `Display` value of the item.
+    fn message(&self) -> String {
+        self.to_string()
+    }
+
+    /// Any additional data to be sent with the error. Default is `None`.
+    fn data(&self) -> Option<BoxedSerialize> {
+        None
+    }
+}
+
+impl<T> From<T> for Error
+where
+    T: ErrorLike,
+{
+    fn from(t: T) -> Error {
+        Error::Full { code: t.code(), message: t.message(), data: t.data() }
+    }
+}
+
+#[cfg(feature = "easy_errors")]
+impl<T> ErrorLike for T where T: std::fmt::Display {}
+
+/// The individual response object
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum ResponseObject {
+    Result { jsonrpc: V2, result: BoxedSerialize, id: Id },
+    Error { jsonrpc: V2, error: Error, id: Id },
+}
+
+impl ResponseObject {
+    fn result(result: BoxedSerialize, id: Id) -> Self {
+        ResponseObject::Result { jsonrpc: V2, result, id }
+    }
+
+    fn error(error: Error, id: Id) -> Self {
+        ResponseObject::Error { jsonrpc: V2, error, id }
     }
 }
 
@@ -621,6 +690,22 @@ impl From<bytes::Bytes> for RequestKind {
 impl<'a> From<&'a [u8]> for RequestKind {
     fn from(t: &'a [u8]) -> Self {
         bytes::Bytes::from(t).into()
+    }
+}
+
+#[derive(Debug)]
+enum OneOrManyRawValues<'a> {
+    Many(Vec<&'a RawValue>),
+    One(&'a RawValue),
+}
+
+impl<'a> OneOrManyRawValues<'a> {
+    pub fn try_from_slice(slice: &'a [u8]) -> Result<Self, serde_json::Error> {
+        if slice.first() == Some(&b'[') {
+            Ok(OneOrManyRawValues::Many(serde_json::from_slice::<Vec<&RawValue>>(slice)?))
+        } else {
+            Ok(OneOrManyRawValues::One(serde_json::from_slice::<&RawValue>(slice)?))
+        }
     }
 }
 
