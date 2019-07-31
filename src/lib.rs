@@ -74,7 +74,6 @@ impl std::fmt::Display for MethodMissing {
 
 impl std::error::Error for MethodMissing {}
 
-
 #[doc(hidden)]
 #[derive(Default, Debug)]
 pub struct V2;
@@ -141,7 +140,7 @@ impl Default for Id {
 pub struct RequestBuilder {
     method: Option<String>,
     params: Option<Value>,
-    id: Id
+    id: Id,
 }
 
 /// Builder struct for a notification request object
@@ -167,13 +166,13 @@ impl RequestBuilder {
     pub fn finish(self) -> Result<RequestObject, MethodMissing> {
         let RequestBuilder { method, params, id } = self;
         match method {
-            Some(method) => Ok(RequestObject { 
-                jsonrpc: V2, 
+            Some(method) => Ok(RequestObject {
+                jsonrpc: V2,
                 method: method.into_boxed_str(),
                 params,
-                id: Some(Some(id))
+                id: Some(Some(id)),
             }),
-            None => Err(MethodMissing)
+            None => Err(MethodMissing),
         }
     }
 }
@@ -190,13 +189,10 @@ impl NotificationBuilder {
     pub fn finish(self) -> Result<RequestObject, MethodMissing> {
         let NotificationBuilder { method, params } = self;
         match method {
-            Some(method) => Ok(RequestObject { 
-                jsonrpc: V2, 
-                method: method.into_boxed_str(),
-                params,
-                id: None
-            }),
-            None => Err(MethodMissing)
+            Some(method) => {
+                Ok(RequestObject { jsonrpc: V2, method: method.into_boxed_str(), params, id: None })
+            }
+            None => Err(MethodMissing),
         }
     }
 }
@@ -214,12 +210,15 @@ pub struct RequestObject {
 }
 
 impl RequestObject {
-    
     /// Build a new request object
-    pub fn request() -> RequestBuilder { RequestBuilder::default() }
+    pub fn request() -> RequestBuilder {
+        RequestBuilder::default()
+    }
 
     /// Build a new notification request object
-    pub fn notification() -> NotificationBuilder { NotificationBuilder::default() }
+    pub fn notification() -> NotificationBuilder {
+        NotificationBuilder::default()
+    }
 
     fn deserialize_id<'de, D>(deserializer: D) -> Result<Option<Option<Id>>, D::Error>
     where

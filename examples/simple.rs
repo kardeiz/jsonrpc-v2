@@ -1,5 +1,5 @@
-use jsonrpc_v2::*;
 use futures::future::Future;
+use jsonrpc_v2::*;
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
@@ -20,7 +20,6 @@ fn message(state: State<String>) -> Result<String, Error> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    
     let rpc = Server::with_state(String::from("Hello!"))
         .with_method("add", add)
         .with_method("sub", sub)
