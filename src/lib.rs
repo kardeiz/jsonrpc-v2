@@ -351,8 +351,6 @@ pub trait Factory<S, I, R, E, T>: Clone
 where
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
 {
     fn call(&self, param: T) -> I;
 }
@@ -363,11 +361,9 @@ where
     F: Factory<S, I, R, E, T>,
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
 {
     hnd: F,
-    _t: PhantomData<fn() -> (S, I, S, E, T)>,
+    _t: PhantomData<fn() -> (S, I, R, E, T)>,
 }
 
 impl<F, S, I, R, E, T> Handler<F, S, I, R, E, T>
@@ -375,8 +371,6 @@ where
     F: Factory<S, I, R, E, T>,
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
 {
     fn new(hnd: F) -> Self {
         Handler { hnd, _t: PhantomData }
@@ -387,8 +381,6 @@ impl<FN, S, I, R, E> Factory<S, I, R, E, ()> for FN
 where
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
     FN: Fn() -> I + Clone,
 {
     fn call(&self, _: ()) -> I {
@@ -400,8 +392,6 @@ impl<FN, S, I, R, E, T1> Factory<S, I, R, E, (T1,)> for FN
 where
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
     FN: Fn(T1) -> I + Clone,
 {
     fn call(&self, param: (T1,)) -> I {
@@ -413,8 +403,6 @@ impl<FN, S, I, R, E, T1, T2> Factory<S, I, R, E, (T1, T2)> for FN
 where
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
     FN: Fn(T1, T2) -> I + Clone,
 {
     fn call(&self, param: (T1, T2)) -> I {
@@ -422,12 +410,10 @@ where
     }
 }
 
-impl<FN, S, I, R, E, T1, T2, T3> Factory<S, I,R, E, (T1, T2, T3)> for FN
+impl<FN, S, I, R, E, T1, T2, T3> Factory<S, I, R, E, (T1, T2, T3)> for FN
 where
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
-    R: Serialize + Send + 'static,
-    Error: From<E>,
     FN: Fn(T1, T2, T3) -> I + Clone,
 {
     fn call(&self, param: (T1, T2, T3)) -> I {

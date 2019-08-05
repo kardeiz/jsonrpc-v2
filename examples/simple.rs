@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("message", message)
         .finish();
 
-    let req = RequestObject::notification()
+    let req = RequestObject::request()
         .with_method("sub")
         .with_params(serde_json::json!([12, 12]))
         .finish()?;
