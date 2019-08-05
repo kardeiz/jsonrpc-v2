@@ -347,35 +347,35 @@ where
 }
 
 #[doc(hidden)]
-pub trait Factory<STATE, I, S, E, T>: Clone
+pub trait Factory<S, I, R, E, T>: Clone
 where
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
 {
     fn call(&self, param: T) -> I;
 }
 
 #[doc(hidden)]
-struct Handler<F, STATE, I, S, E, T>
+struct Handler<F, S, I, R, E, T>
 where
-    F: Factory<STATE, I, S, E, T>,
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    F: Factory<S, I, R, E, T>,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
 {
     hnd: F,
-    _t: PhantomData<fn() -> (STATE, I, S, E, T)>,
+    _t: PhantomData<fn() -> (S, I, S, E, T)>,
 }
 
-impl<F, STATE, I, S, E, T> Handler<F, STATE, I, S, E, T>
+impl<F, S, I, R, E, T> Handler<F, S, I, R, E, T>
 where
-    F: Factory<STATE, I, S, E, T>,
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    F: Factory<S, I, R, E, T>,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
 {
     fn new(hnd: F) -> Self {
@@ -383,73 +383,73 @@ where
     }
 }
 
-impl<FUNC, STATE, I, S, E> Factory<STATE, I, S, E, ()> for FUNC
+impl<FN, S, I, R, E> Factory<S, I, R, E, ()> for FN
 where
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
-    FUNC: Fn() -> I + Clone,
+    FN: Fn() -> I + Clone,
 {
     fn call(&self, _: ()) -> I {
         (self)()
     }
 }
 
-impl<FUNC, STATE, I, S, E, T1> Factory<STATE, I, S, E, (T1,)> for FUNC
+impl<FN, S, I, R, E, T1> Factory<S, I, R, E, (T1,)> for FN
 where
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
-    FUNC: Fn(T1) -> I + Clone,
+    FN: Fn(T1) -> I + Clone,
 {
     fn call(&self, param: (T1,)) -> I {
         (self)(param.0)
     }
 }
 
-impl<FUNC, STATE, I, S, E, T1, T2> Factory<STATE, I, S, E, (T1, T2)> for FUNC
+impl<FN, S, I, R, E, T1, T2> Factory<S, I, R, E, (T1, T2)> for FN
 where
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
-    FUNC: Fn(T1, T2) -> I + Clone,
+    FN: Fn(T1, T2) -> I + Clone,
 {
     fn call(&self, param: (T1, T2)) -> I {
         (self)(param.0, param.1)
     }
 }
 
-impl<FUNC, STATE, I, S, E, T1, T2, T3> Factory<STATE, I, S, E, (T1, T2, T3)> for FUNC
+impl<FN, S, I, R, E, T1, T2, T3> Factory<S, I,R, E, (T1, T2, T3)> for FN
 where
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
-    FUNC: Fn(T1, T2, T3) -> I + Clone,
+    FN: Fn(T1, T2, T3) -> I + Clone,
 {
     fn call(&self, param: (T1, T2, T3)) -> I {
         (self)(param.0, param.1, param.2)
     }
 }
 
-impl<F, STATE, I, S, E, T> From<Handler<F, STATE, I, S, E, T>> for BoxedHandler<STATE>
+impl<F, S, I, R, E, T> From<Handler<F, S, I, R, E, T>> for BoxedHandler<S>
 where
-    F: Factory<STATE, I, S, E, T> + 'static + Send + Sync,
-    STATE: 'static,
-    I: IntoFuture<Item = S, Error = E> + 'static,
-    S: Serialize + Send + 'static,
+    F: Factory<S, I, R, E, T> + 'static + Send + Sync,
+    S: 'static,
+    I: IntoFuture<Item = R, Error = E> + 'static,
+    R: Serialize + Send + 'static,
     Error: From<E>,
     E: 'static,
-    T: FromRequest<STATE> + 'static,
-    <<T as FromRequest<STATE>>::Result as IntoFuture>::Future: 'static,
+    T: FromRequest<S> + 'static,
+    <<T as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
 {
-    fn from(t: Handler<F, STATE, I, S, E, T>) -> BoxedHandler<STATE> {
+    fn from(t: Handler<F, S, I, R, E, T>) -> BoxedHandler<S> {
         let arc = Arc::new(t.hnd);
 
-        let inner = move |req: RequestObjectWithState<STATE>| {
+        let inner = move |req: RequestObjectWithState<S>| {
             let cloned = Arc::clone(&arc);
             let rt = T::from_request(&req)
                 .into_future()
@@ -462,9 +462,9 @@ where
     }
 }
 
-struct BoxedHandler<STATE>(
+struct BoxedHandler<S>(
     Box<
-        Fn(RequestObjectWithState<STATE>) -> Box<Future<Item = BoxedSerialize, Error = Error>>
+        Fn(RequestObjectWithState<S>) -> Box<Future<Item = BoxedSerialize, Error = Error>>
             + Send
             + Sync,
     >,
@@ -501,7 +501,7 @@ impl<S: 'static + Send + Sync> Server<S> {
     }
 }
 
-impl<STATE: 'static + Send + Sync> ServerBuilder<STATE> {
+impl<S: 'static + Send + Sync> ServerBuilder<S> {
     /// Add a method and handler to the server
     ///
     /// The method can be a function that takes up to 3 [`FromRequest`](trait.FromRequest.html) items
@@ -510,23 +510,23 @@ impl<STATE: 'static + Send + Sync> ServerBuilder<STATE> {
     /// ```rust,no_run
     /// fn handle(params: Params<(i32, String)>, state: State<HashMap<String, String>>) -> Result<String, Error> { /* ... */ }
     /// ```
-    pub fn with_method<N, I, S, E, F, T>(mut self, name: N, handler: F) -> Self
+    pub fn with_method<N, I, R, E, F, T>(mut self, name: N, handler: F) -> Self
     where
         N: Into<String>,
-        F: Factory<STATE, I, S, E, T> + Send + Sync + 'static,
-        I: IntoFuture<Item = S, Error = E> + 'static,
-        S: Serialize + Send + 'static,
+        F: Factory<S, I, R, E, T> + Send + Sync + 'static,
+        I: IntoFuture<Item = R, Error = E> + 'static,
+        R: Serialize + Send + 'static,
         Error: From<E>,
         E: 'static,
-        T: FromRequest<STATE> + 'static,
-        <<T as FromRequest<STATE>>::Result as IntoFuture>::Future: 'static,
+        T: FromRequest<S> + 'static,
+        <<T as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
     {
         self.methods.insert(name.into(), Handler::new(handler).into());
         self
     }
 
     /// Convert the server builder into the finished struct
-    pub fn finish(self) -> Server<STATE> {
+    pub fn finish(self) -> Server<S> {
         Server(Arc::new(self))
     }
 }
