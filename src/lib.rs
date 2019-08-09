@@ -299,10 +299,10 @@ impl<S, T: DeserializeOwned> FromRequest<S> for Params<T> {
 
 impl<S, T1> FromRequest<S> for (T1,)
 where
-    T1: FromRequest<S>,
-    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    T1: FromRequest<S> + Send,
+    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
 {
-    type Result = Box<Future<Item = (T1,), Error = Error>>;
+    type Result = Box<Future<Item = (T1,), Error = Error> + Send>;
 
     fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
         let rt = T1::from_request(req).into_future().map(|x| (x,));
@@ -312,12 +312,12 @@ where
 
 impl<S, T1, T2> FromRequest<S> for (T1, T2)
 where
-    T1: FromRequest<S>,
-    T2: FromRequest<S>,
-    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
-    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    T1: FromRequest<S> + Send,
+    T2: FromRequest<S> + Send,
+    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
+    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
 {
-    type Result = Box<Future<Item = (T1, T2), Error = Error>>;
+    type Result = Box<Future<Item = (T1, T2), Error = Error> + Send>;
 
     fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
         let rt = T1::from_request(req).into_future().join(T2::from_request(req));
@@ -327,14 +327,14 @@ where
 
 impl<S, T1, T2, T3> FromRequest<S> for (T1, T2, T3)
 where
-    T1: FromRequest<S>,
-    T2: FromRequest<S>,
-    T3: FromRequest<S>,
-    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
-    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
-    <<T3 as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    T1: FromRequest<S> + Send,
+    T2: FromRequest<S> + Send,
+    T3: FromRequest<S> + Send,
+    <<T1 as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
+    <<T2 as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
+    <<T3 as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
 {
-    type Result = Box<Future<Item = (T1, T2, T3), Error = Error>>;
+    type Result = Box<Future<Item = (T1, T2, T3), Error = Error> + Send>;
 
     fn from_request(req: &RequestObjectWithState<S>) -> Self::Result {
         let rt = Future::join3(
@@ -426,11 +426,12 @@ where
     F: Factory<S, I, R, E, T> + 'static + Send + Sync,
     S: 'static,
     I: IntoFuture<Item = R, Error = E> + 'static,
+    I::Future: Send,
     R: Serialize + Send + 'static,
     Error: From<E>,
     E: 'static,
     T: FromRequest<S> + 'static,
-    <<T as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+    <<T as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
 {
     fn from(t: Handler<F, S, I, R, E, T>) -> BoxedHandler<S> {
         let arc = Arc::new(t.hnd);
@@ -441,7 +442,7 @@ where
                 .into_future()
                 .and_then(move |param| cloned.call(param).into_future().map_err(Error::from))
                 .map(|s| Box::new(s) as BoxedSerialize);
-            Box::new(rt) as Box<Future<Item = BoxedSerialize, Error = Error>>
+            Box::new(rt) as Box<Future<Item = BoxedSerialize, Error = Error> + Send>
         };
 
         BoxedHandler(Box::new(inner))
@@ -450,7 +451,7 @@ where
 
 struct BoxedHandler<S>(
     Box<
-        Fn(RequestObjectWithState<S>) -> Box<Future<Item = BoxedSerialize, Error = Error>>
+        Fn(RequestObjectWithState<S>) -> Box<Future<Item = BoxedSerialize, Error = Error> + Send>
             + Send
             + Sync,
     >,
@@ -501,11 +502,12 @@ impl<S: 'static + Send + Sync> ServerBuilder<S> {
         N: Into<String>,
         F: Factory<S, I, R, E, T> + Send + Sync + 'static,
         I: IntoFuture<Item = R, Error = E> + 'static,
+        I::Future: Send,
         R: Serialize + Send + 'static,
         Error: From<E>,
         E: 'static,
         T: FromRequest<S> + 'static,
-        <<T as FromRequest<S>>::Result as IntoFuture>::Future: 'static,
+        <<T as FromRequest<S>>::Result as IntoFuture>::Future: 'static + Send,
     {
         self.methods.insert(name.into(), Handler::new(handler).into());
         self
@@ -817,8 +819,9 @@ where
         )))))
     }
 
+    #[cfg(feature = "actix")]
     /// Converts the server into an `actix-web` compatible `NewService`
-    pub fn into_web_service(
+    pub fn into_actix_web_service(
         self,
     ) -> impl actix_service::NewService<
         Request = actix_web::dev::ServiceRequest,
@@ -858,5 +861,97 @@ where
         };
 
         actix_service::service_fn::<_, _, _, ()>(inner)
+    }
+
+    #[cfg(feature = "hyper")]
+    pub fn into_hyper_web_service(self) -> Hyper<S> {
+        Hyper(self)
+    }
+
+    #[cfg(all(feature = "actix", not(feature = "hyper")))]
+    /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
+    ///
+    /// Is not provided when both features are enabled
+    pub fn into_web_service(
+        self,
+    ) -> impl actix_service::NewService<
+        Request = actix_web::dev::ServiceRequest,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+        Config = (),
+        InitError = (),
+    > {
+        self.into_actix_web_service()
+    }
+
+    /// Converts the server into a `hyper` compatible `MakeService` type
+    #[cfg(all(feature = "hyper", not(feature = "actix")))]
+    pub fn into_web_service(self) -> Hyper<S> {
+        self.into_hyper_web_service()
+    }
+}
+
+#[cfg(feature = "hyper")]
+pub struct Hyper<S>(pub(crate) Server<S>);
+
+#[cfg(feature = "hyper")]
+impl<S: 'static + Send + Sync> hyper::service::Service for Hyper<S> {
+    type Error = Box<std::error::Error + Send + Sync + 'static>;
+    type Future = Box<Future<Item = hyper::Response<Self::ResBody>, Error = Self::Error> + Send>;
+    type ReqBody = hyper::Body;
+    type ResBody = hyper::Body;
+
+    fn call(&mut self, req: hyper::Request<Self::ReqBody>) -> Self::Future {
+        let cloned = self.0.clone();
+        let rt = req
+            .into_body()
+            .concat2()
+            .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>)
+            .and_then(move |chunk| {
+                cloned.handle_bytes(chunk.into_bytes()).then(|res| match res {
+                    Ok(res_inner) => match res_inner {
+                        ResponseObjects::Empty => hyper::Response::builder()
+                            .status(hyper::StatusCode::NO_CONTENT)
+                            .body(Vec::<u8>::new().into())
+                            .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>),
+                        json => serde_json::to_vec(&json)
+                            .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>)
+                            .and_then(|json| {
+                                hyper::Response::builder()
+                                    .status(hyper::StatusCode::OK)
+                                    .body(json.into())
+                                    .map_err(|e| {
+                                        Box::new(e) as Box<std::error::Error + Send + Sync>
+                                    })
+                            }),
+                    },
+                    Err(_) => hyper::Response::builder()
+                        .status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Vec::<u8>::new().into())
+                        .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>),
+                })
+            });
+
+        Box::new(rt)
+            as Box<
+                Future<
+                        Item = hyper::Response<hyper::Body>,
+                        Error = Box<std::error::Error + Send + Sync>,
+                    > + Send,
+            >
+    }
+}
+
+#[cfg(feature = "hyper")]
+impl<S: 'static + Send + Sync + Clone, Ctx> hyper::service::MakeService<Ctx> for Hyper<S> {
+    type Error = <Hyper<S> as hyper::service::Service>::Error;
+    type Future = futures::future::FutureResult<Hyper<S>, Self::MakeError>;
+    type MakeError = Box<std::error::Error + Send + Sync + 'static>;
+    type ReqBody = <Hyper<S> as hyper::service::Service>::ReqBody;
+    type ResBody = <Hyper<S> as hyper::service::Service>::ResBody;
+    type Service = Hyper<S>;
+
+    fn make_service(&mut self, _: Ctx) -> Self::Future {
+        futures::future::ok(Hyper(self.0.clone()))
     }
 }
