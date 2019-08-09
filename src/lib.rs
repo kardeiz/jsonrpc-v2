@@ -1,7 +1,18 @@
 /*!
 A very small and very fast JSON-RPC 2.0 server-focused framework.
 
-Provides an integration for `actix-web` servers.
+Provides integrations for both `hyper` and `actix-web`. Enable features `actix` or `hyper` depending on need.
+
+`actix` is enabled by default. Make sure to add `default-features = false` if using `hyper`.
+
+Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](trait.ErrorLike.html)
+for anything that implements `Display`, and the display value will be provided in the `message` field of the JSON-RPC 2.0 `Error` response.
+
+Otherwise, custom errors should implement [`ErrorLike`](trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response. 
+
+Individual method handlers can take various kinds of args (things that can be extracted from the request, like
+the `Params` or `State`), and should return something that can resolve into a future where the `Item` is 
+serializable. See examples below.
 
 # Usage
 

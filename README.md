@@ -1,8 +1,22 @@
 # jsonrpc-v2
 
+[![Docs](https://docs.rs/jsonrpc-v2/badge.svg)](https://docs.rs/crate/jsonrpc-v2/)
+[![Crates.io](https://img.shields.io/crates/v/jsonrpc-v2.svg)](https://crates.io/crates/jsonrpc-v2)
+
 A very small and very fast JSON-RPC 2.0 server-focused framework.
 
-Provides an integration for `actix-web` servers.
+Provides integrations for both `hyper` and `actix-web`. Enable features `actix` or `hyper` depending on need.
+
+`actix` is enabled by default. Make sure to add `default-features = false` if using `hyper`.
+
+Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](trait.ErrorLike.html)
+for anything that implements `Display`, and the display value will be provided in the `message` field of the JSON-RPC 2.0 `Error` response.
+
+Otherwise, custom errors should implement [`ErrorLike`](trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response.
+
+Individual method handlers can take various kinds of args (things that can be extracted from the request, like
+the `Params` or `State`), and should return something that can resolve into a future where the `Item` is
+serializable. See examples below.
 
 ## Usage
 
@@ -46,5 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+Current version: 0.3.2
 
 License: MIT
