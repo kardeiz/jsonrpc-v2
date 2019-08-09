@@ -714,49 +714,6 @@ where
         }
     }
 
-    /// Converts the server into an `actix-web` compatible `NewService`
-    pub fn into_web_service(
-        self,
-    ) -> impl actix_service::NewService<
-        Request = actix_web::dev::ServiceRequest,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-        Config = (),
-        InitError = (),
-    > {
-        let inner = move |req: actix_web::dev::ServiceRequest| {
-            let cloned = self.clone();
-            let (req, payload) = req.into_parts();
-            let rt = payload
-                .map_err(actix_web::Error::from)
-                .fold(actix_web::web::BytesMut::new(), move |mut body, chunk| {
-                    body.extend_from_slice(&chunk);
-                    Ok::<_, actix_web::Error>(body)
-                })
-                .and_then(move |bytes| {
-                    cloned.handle_bytes(bytes.freeze()).then(|res| match res {
-                        Ok(res_inner) => match res_inner {
-                            ResponseObjects::Empty => Ok(actix_web::dev::ServiceResponse::new(
-                                req,
-                                actix_web::HttpResponse::NoContent().finish(),
-                            )),
-                            json => Ok(actix_web::dev::ServiceResponse::new(
-                                req,
-                                actix_web::HttpResponse::Ok().json(json),
-                            )),
-                        },
-                        Err(_) => Ok(actix_web::dev::ServiceResponse::new(
-                            req,
-                            actix_web::HttpResponse::InternalServerError().into(),
-                        )),
-                    })
-                });
-            rt
-        };
-
-        actix_service::service_fn::<_, _, _, ()>(inner)
-    }
-
     fn handle_request_object(
         &self,
         req: RequestObject,
@@ -858,5 +815,48 @@ where
             Error::PARSE_ERROR,
             Id::Null,
         )))))
+    }
+
+    /// Converts the server into an `actix-web` compatible `NewService`
+    pub fn into_web_service(
+        self,
+    ) -> impl actix_service::NewService<
+        Request = actix_web::dev::ServiceRequest,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+        Config = (),
+        InitError = (),
+    > {
+        let inner = move |req: actix_web::dev::ServiceRequest| {
+            let cloned = self.clone();
+            let (req, payload) = req.into_parts();
+            let rt = payload
+                .map_err(actix_web::Error::from)
+                .fold(actix_web::web::BytesMut::new(), move |mut body, chunk| {
+                    body.extend_from_slice(&chunk);
+                    Ok::<_, actix_web::Error>(body)
+                })
+                .and_then(move |bytes| {
+                    cloned.handle_bytes(bytes.freeze()).then(|res| match res {
+                        Ok(res_inner) => match res_inner {
+                            ResponseObjects::Empty => Ok(actix_web::dev::ServiceResponse::new(
+                                req,
+                                actix_web::HttpResponse::NoContent().finish(),
+                            )),
+                            json => Ok(actix_web::dev::ServiceResponse::new(
+                                req,
+                                actix_web::HttpResponse::Ok().json(json),
+                            )),
+                        },
+                        Err(_) => Ok(actix_web::dev::ServiceResponse::new(
+                            req,
+                            actix_web::HttpResponse::InternalServerError().into(),
+                        )),
+                    })
+                });
+            rt
+        };
+
+        actix_service::service_fn::<_, _, _, ()>(inner)
     }
 }
