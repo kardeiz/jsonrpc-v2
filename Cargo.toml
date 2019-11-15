@@ -2,7 +2,7 @@
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
 edition = "2018"
 name = "jsonrpc-v2"
-version = "0.3.2"
+version = "0.4.0"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
@@ -17,10 +17,12 @@ actix = ["actix-web", "actix-service"]
 [dependencies]
 bytes = "0.4"
 erased-serde = "0.3"
-futures = "0.1"
+futures = { version = "0.3.1", features = ["compat"] }
+futures01 = { version = "0.1", package = "futures" }
 actix-web = { version = "1", optional = true }
 actix-service = { version = "0.4", optional = true }
 hyper = { version = "0.12.33", optional = true }
+async-trait = "0.1.17"
 
 [dependencies.serde]
 features = ["derive"]
@@ -31,7 +33,6 @@ features = ["raw_value"]
 version = "1"
 
 [dev-dependencies]
-
 bytes = "0.4.11"
 http = "0.1.15"
-tokio = "0.1.15"
+tokio = "0.2.0-alpha.6"
