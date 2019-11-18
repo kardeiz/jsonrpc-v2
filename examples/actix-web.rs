@@ -23,8 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("message", message)
-        .finish()
-        .wrap();
+        .finish();
 
     actix_web::HttpServer::new(move || {
         let rpc = rpc.clone();

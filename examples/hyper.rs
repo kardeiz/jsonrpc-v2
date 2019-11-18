@@ -1,4 +1,3 @@
-use futures::future::{Future, TryFutureExt};
 use jsonrpc_v2::*;
 
 #[derive(serde::Deserialize)]
@@ -25,8 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("message", message)
-        .finish()
-        .wrap();
+        .finish();
 
     let addr = "0.0.0.0:3000".parse().unwrap();
 

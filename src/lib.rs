@@ -10,9 +10,8 @@ for anything that implements `Display`, and the display value will be provided i
 
 Otherwise, custom errors should implement [`ErrorLike`](trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response.
 
-Individual method handlers can take various kinds of args (things that can be extracted from the request, like
-the `Params` or `State`), and should return something that can resolve into a future where the `Item` is
-serializable. See examples below.
+Individual method handlers are `async` functions that can take various kinds of args (things that can be extracted from the request, like
+the `Params` or `State`), and should return a `Result<Item, Error>` where the `Item` is serializable. See examples below.
 
 # Usage
 
@@ -20,22 +19,24 @@ serializable. See examples below.
 use jsonrpc_v2::*;
 
 #[derive(serde::Deserialize)]
-struct TwoNums { a: usize, b: usize }
+struct TwoNums {
+    a: usize,
+    b: usize,
+}
 
-fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
     Ok(params.a + params.b)
 }
 
-fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
+async fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
     Ok(params.0 - params.1)
 }
 
-fn message(state: State<String>) -> Result<String, Error> {
+async fn message(state: State<String>) -> Result<String, Error> {
     Ok(String::from(&*state))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let rpc = Server::with_state(String::from("Hello!"))
         .with_method("add", add)
         .with_method("sub", sub)
@@ -65,8 +66,8 @@ use serde_json::{value::RawValue, Value};
 use std::sync::Arc;
 
 use futures::{
-    future::{self, Future, FutureExt, TryFuture, TryFutureExt},
-    stream::{self, StreamExt, TryStreamExt},
+    future::{self, Future, FutureExt, TryFutureExt},
+    stream::TryStreamExt,
 };
 
 use std::{collections::HashMap, marker::PhantomData};
@@ -550,10 +551,6 @@ impl<S: 'static + Send + Sync> Server<S> {
     pub fn with_state(state: S) -> ServerBuilder<S> {
         ServerBuilder { state: Arc::new(state), methods: HashMap::new() }
     }
-
-    pub fn wrap(self) -> Arc<Server<S>> {
-        Arc::new(self)
-    }
 }
 
 impl<S: 'static + Send + Sync> ServerBuilder<S> {
@@ -578,8 +575,13 @@ impl<S: 'static + Send + Sync> ServerBuilder<S> {
         self
     }
 
+    /// Convert the server builder into the finished struct, wrapped in an `Arc`
+    pub fn finish(self) -> Arc<Server<S>> {
+        Arc::new(Server(self))
+    }
+
     /// Convert the server builder into the finished struct
-    pub fn finish(self) -> Server<S> {
+    pub fn finish_direct(self) -> Server<S> {
         Server(self)
     }
 }
@@ -901,11 +903,36 @@ where
     pub fn into_hyper_web_service(self: Arc<Self>) -> Hyper<S> {
         Hyper(self)
     }
+
+    #[cfg(all(feature = "actix-integration", not(feature = "hyper-integration")))]
+    /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
+    ///
+    /// Is not provided when both features are enabled
+    pub fn into_web_service(
+        self: Arc<Self>,
+    ) -> impl actix_service::NewService<
+        Request = actix_web::dev::ServiceRequest,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+        Config = (),
+        InitError = (),
+    > {
+        self.into_actix_web_service()
+    }
+
+    /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
+    ///
+    /// Is not provided when both features are enabled
+    #[cfg(all(feature = "hyper-integration", not(feature = "actix-integration")))]
+    pub fn into_web_service(self) -> Hyper<S> {
+        self.into_hyper_web_service()
+    }
 }
 
 #[cfg(feature = "hyper-integration")]
 pub struct Hyper<S>(pub(crate) Arc<Server<S>>);
 
+#[cfg(feature = "hyper-integration")]
 impl<S> tower_service::Service<hyper::Request<hyper::Body>> for Hyper<S>
 where
     S: 'static + Send + Sync,
@@ -938,26 +965,30 @@ where
                     ResponseObjects::Empty => hyper::Response::builder()
                         .status(hyper::StatusCode::NO_CONTENT)
                         .body(hyper::Body::from(Vec::<u8>::new()))
-                        .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>),
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
                     json => serde_json::to_vec(&json)
-                        .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                         .and_then(|json| {
                             hyper::Response::builder()
                                 .status(hyper::StatusCode::OK)
+                                .header("Content-Type", "application/json")
                                 .body(hyper::Body::from(json))
-                                .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>)
+                                .map_err(|e| {
+                                    Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+                                })
                         }),
                 },
                 Err(_) => hyper::Response::builder()
                     .status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
                     .body(hyper::Body::from(Vec::<u8>::new()))
-                    .map_err(|e| Box::new(e) as Box<std::error::Error + Send + Sync>),
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
             }
         };
         Box::pin(rt)
     }
 }
 
+#[cfg(feature = "hyper-integration")]
 impl<'a, S> tower_service::Service<&'a hyper::server::conn::AddrStream> for Hyper<S>
 where
     S: 'static + Send + Sync,

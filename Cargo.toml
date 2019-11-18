@@ -10,7 +10,7 @@ readme = "README.md"
 repository = "https://github.com/kardeiz/jsonrpc-v2"
 
 [features]
-default = ["actix-integration", "hyper-integration"]
+default = ["actix-integration"]
 easy_errors = []
 actix-integration = ["actix-web", "actix-service"]
 hyper-integration = ["hyper", "tower-service"]
