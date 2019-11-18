@@ -14,9 +14,8 @@ for anything that implements `Display`, and the display value will be provided i
 
 Otherwise, custom errors should implement [`ErrorLike`](trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response.
 
-Individual method handlers can take various kinds of args (things that can be extracted from the request, like
-the `Params` or `State`), and should return something that can resolve into a future where the `Item` is
-serializable. See examples below.
+Individual method handlers are `async` functions that can take various kinds of args (things that can be extracted from the request, like
+the `Params` or `State`), and should return a `Result<Item, Error>` where the `Item` is serializable. See examples below.
 
 ## Usage
 
@@ -24,22 +23,24 @@ serializable. See examples below.
 use jsonrpc_v2::*;
 
 #[derive(serde::Deserialize)]
-struct TwoNums { a: usize, b: usize }
+struct TwoNums {
+    a: usize,
+    b: usize,
+}
 
-fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
     Ok(params.a + params.b)
 }
 
-fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
+async fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
     Ok(params.0 - params.1)
 }
 
-fn message(state: State<String>) -> Result<String, Error> {
+async fn message(state: State<String>) -> Result<String, Error> {
     Ok(String::from(&*state))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let rpc = Server::with_state(String::from("Hello!"))
         .with_method("add", add)
         .with_method("sub", sub)
@@ -61,6 +62,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Current version: 0.3.2
+Current version: 0.4.0
 
 License: MIT
