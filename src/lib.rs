@@ -1,7 +1,7 @@
 /*!
 A very small and very fast JSON-RPC 2.0 server-focused framework.
 
-Provides integrations for both `hyper` and `actix-web`. Enable features `actix` or `hyper` depending on need.
+Provides integrations for both `hyper` and `actix-web`. Enable features `actix-integration` or `hyper-integration` depending on need.
 
 `actix` is enabled by default. Make sure to add `default-features = false` if using `hyper`.
 
