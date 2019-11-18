@@ -10,9 +10,10 @@ readme = "README.md"
 repository = "https://github.com/kardeiz/jsonrpc-v2"
 
 [features]
-default = ["actix"]
+default = ["actix-integration", "hyper-integration"]
 easy_errors = []
-actix = ["actix-web", "actix-service"]
+actix-integration = ["actix-web", "actix-service"]
+hyper-integration = ["hyper", "tower-service"]
 
 [dependencies]
 bytes = "0.4"
@@ -21,8 +22,9 @@ futures = { version = "0.3.1", features = ["compat"] }
 futures01 = { version = "0.1", package = "futures" }
 actix-web = { version = "1", optional = true }
 actix-service = { version = "0.4", optional = true }
-hyper = { version = "0.12.33", optional = true }
+hyper = { version = "0.13.0-alpha.4", optional = true }
 async-trait = "0.1.17"
+tower-service = { version = "0.3.0-alpha.2", optional = true }
 
 [dependencies.serde]
 features = ["derive"]

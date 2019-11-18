@@ -6,15 +6,15 @@ struct TwoNums {
     b: usize,
 }
 
-fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
     Ok(params.a + params.b)
 }
 
-fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
+async fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
     Ok(params.0 - params.1)
 }
 
-fn message(state: State<String>) -> Result<String, Error> {
+async fn message(state: State<String>) -> Result<String, Error> {
     Ok(String::from(&*state))
 }
 
@@ -23,7 +23,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("message", message)
-        .finish();
+        .finish()
+        .wrap();
 
     actix_web::HttpServer::new(move || {
         let rpc = rpc.clone();
