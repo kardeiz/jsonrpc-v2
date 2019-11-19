@@ -499,14 +499,14 @@ where
     T: FromRequest<S> + 'static + Send,
 {
     fn from(t: Handler<F, S, R, E, T>) -> BoxedHandler<S> {
-        let arc = Arc::new(t.hnd);
+        let hnd = Arc::new(t.hnd);
 
         let inner = move |req: RequestObjectWithState<S>| {
-            let cloned = Arc::clone(&arc);
+            let hnd = Arc::clone(&hnd);
             Box::pin(async move {
                 let out = {
                     let param = T::from_request(&req).await?;
-                    cloned.call(param).await?
+                    hnd.call(param).await?
                 };
                 Ok(Box::new(out) as BoxedSerialize)
             })
@@ -863,10 +863,10 @@ where
     > {
         use futures01::{Future, Stream};
 
-        let cloned = Arc::new(self);
+        let service = Arc::clone(&self);
 
         let inner = move |req: actix_web::dev::ServiceRequest| {
-            let cloned = cloned.clone();
+            let service = Arc::clone(&service);
             let (req, payload) = req.into_parts();
             let rt = payload
                 .map_err(actix_web::Error::from)
@@ -875,7 +875,7 @@ where
                     Ok::<_, actix_web::Error>(body)
                 })
                 .and_then(move |bytes| {
-                    cloned.handle_bytes_compat(bytes.freeze()).then(|res| match res {
+                    service.handle_bytes_compat(bytes.freeze()).then(|res| match res {
                         Ok(res_inner) => match res_inner {
                             ResponseObjects::Empty => Ok(actix_web::dev::ServiceResponse::new(
                                 req,
