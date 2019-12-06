@@ -15,7 +15,7 @@ for anything that implements `Display`, and the display value will be provided i
 Otherwise, custom errors should implement [`ErrorLike`](trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response.
 
 Individual method handlers are `async` functions that can take various kinds of args (things that can be extracted from the request, like
-the `Params` or `State`), and should return a `Result<Item, Error>` where the `Item` is serializable. See examples below.
+the `Params` or `Data`), and should return a `Result<Item, Error>` where the `Item` is serializable. See examples below.
 
 ## Usage
 
@@ -36,13 +36,13 @@ async fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
     Ok(params.0 - params.1)
 }
 
-async fn message(state: State<String>) -> Result<String, Error> {
-    Ok(String::from(&*state))
+async fn message(data: Data<String>) -> Result<String, Error> {
+    Ok(String::from(&*data))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let rpc = Server::with_state(String::from("Hello!"))
-        .with_method("add", add)
+    let rpc = Server::new()
+        .with_data(Data::new(String::from("Hello!")))
         .with_method("sub", sub)
         .with_method("message", message)
         .finish();
@@ -62,6 +62,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Current version: 0.4.0
+Current version: 0.4.1
 
 License: MIT

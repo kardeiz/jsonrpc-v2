@@ -2,7 +2,7 @@
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
 edition = "2018"
 name = "jsonrpc-v2"
-version = "0.4.1"
+version = "0.5.0-alpha.1"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
@@ -11,9 +11,10 @@ repository = "https://github.com/kardeiz/jsonrpc-v2"
 
 [features]
 default = ["actix-integration"]
-easy_errors = []
+easy-errors = []
 actix-integration = ["actix-web", "actix-service"]
 hyper-integration = ["hyper", "tower-service"]
+macros = ["jsonrpc-v2-macros"]
 
 [dependencies]
 bytes = "0.4"
@@ -25,6 +26,8 @@ actix-service = { version = "0.4", optional = true }
 hyper = { version = "0.13.0-alpha.4", optional = true }
 async-trait = "0.1.17"
 tower-service = { version = "0.3.0-alpha.2", optional = true }
+extensions = "0.2"
+jsonrpc-v2-macros = { version = "0.1.0", path = "./jsonrpc-v2-macros", optional = true }
 
 [dependencies.serde]
 features = ["derive"]
