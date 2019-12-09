@@ -494,7 +494,7 @@ where
 
 #[doc(hidden)]
 #[async_trait::async_trait]
-pub trait Factory<S, E, T>: Clone {
+pub trait Factory<S, E, T> {
     async fn call(&self, param: T) -> Result<S, E>;
 }
 
@@ -522,7 +522,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn() -> I + Clone + Sync,
+    FN: Fn() -> I + Sync,
 {
     async fn call(&self, _: ()) -> Result<S, E> {
         (self)().await
@@ -535,7 +535,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1) -> I + Clone + Sync,
+    FN: Fn(T1) -> I + Sync,
     T1: Send + 'static,
 {
     async fn call(&self, param: (T1,)) -> Result<S, E> {
@@ -549,7 +549,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2) -> I + Clone + Sync,
+    FN: Fn(T1, T2) -> I  + Sync,
     T1: Send + 'static,
     T2: Send + 'static,
 {
@@ -564,7 +564,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3) -> I + Clone + Sync,
+    FN: Fn(T1, T2, T3) -> I + Sync,
     T1: Send + 'static,
     T2: Send + 'static,
     T3: Send + 'static,
@@ -580,7 +580,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3, T4) -> I + Clone + Sync,
+    FN: Fn(T1, T2, T3, T4) -> I + Sync,
     T1: Send + 'static,
     T2: Send + 'static,
     T3: Send + 'static,
@@ -597,7 +597,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3, T4, T5) -> I + Clone + Sync,
+    FN: Fn(T1, T2, T3, T4, T5) -> I + Sync,
     T1: Send + 'static,
     T2: Send + 'static,
     T3: Send + 'static,

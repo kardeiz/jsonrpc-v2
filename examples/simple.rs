@@ -18,11 +18,10 @@ async fn message(data: Data<String>) -> Result<String, Error> {
     Ok(String::from(&*data))
 }
 
-#[jsonrpc_v2_method(extern = true)]
-async fn message_test(a: i32, b: i32) -> Result<String, Error> {
+#[jsonrpc_v2_method(wrapped_fn = "message_x", externify = true)]
+pub async fn message_test(a: i32, b: i32) -> Result<String, Error> {
     Ok(format!("{} + {}", a, b))
 }
-
 // async fn message_test_2(params: Params<Option<serde_json::Value>>) -> Result<serde_json::Value, Error> {
 //     message_test(params).await
 // }
@@ -38,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("message", message)
-        .with_method("message-test", |params| async move { message_test(params).await })
+        .with_method("message-test", |params| async move { message_x(params).await })
         .finish_unwrapped();
 
     let req = RequestObject::request()

@@ -8,17 +8,19 @@ use quote::quote;
 
 use syn::*;
 
+struct CustomOuterAttrs(Vec<Attribute>);
+
+impl parse::Parse for CustomOuterAttrs {
+    fn parse(input: parse::ParseStream) -> Result<Self> {
+        Ok(CustomOuterAttrs(input.call(Attribute::parse_outer)?))
+    }
+}
+
 #[proc_macro_attribute]
 pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
     let method = parse_macro_input!(item as ItemFn);
 
-    let method_as_inner = {
-        let mut method = method.clone();
-        method.sig.ident = Ident::new("inner", Span::call_site());
-        method
-    };
-
-    let method_ident = &method.sig.ident;
+    let method_ident = &method.sig.ident;    
 
     let attrs = parse_macro_input!(attrs as AttributeArgs);
 
@@ -37,9 +39,9 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
         .map(|x| &x.ident)
         .collect::<Vec<_>>();
 
-    let mut wrapped_fn_ident = None;
+    let mut wrapped_fn_ident = None;    
     let wrapped_fn_path: Path = parse_quote!(wrapped_fn);
-    let extern_path: Path = parse_quote!(extern);
+    let externify_path: Path = parse_quote!(externify);
 
     if let Some(wrapped_fn_name_lit) = attrs
         .iter()
@@ -60,7 +62,7 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
         wrapped_fn_ident = Some(Ident::new(&wrapped_fn_name_lit.value(), Span::call_site()));
     }
 
-    let extern_token = if attrs
+    let externify = attrs
         .iter()
         .filter_map(|x| match x {
             NestedMeta::Meta(y) => Some(y),
@@ -70,96 +72,118 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
             Meta::NameValue(y) => Some(y),
             _ => None
         })
-        .find(|x| &x.path == &extern_path)
+        .find(|x| &x.path == &externify_path)
         .map(|x| match x.lit {
             Lit::Bool(ref y) => y.value,
             _ => false
-        }).unwrap_or(false)
-    {
-        quote!(extern)
-    } else {
-        quote!()
-    };
+        }).unwrap_or(false);
 
-    let maybe_method = if wrapped_fn_ident.is_some() {
-        quote!(#method)
-    } else {
-        quote!()
-    };
+    let mut method_as_outer = quote!();
 
-    let new_fn_ident = wrapped_fn_ident.clone().unwrap_or_else(|| method_ident.clone());
+    let wrapped_fn = {
 
-    let param_names = &params
-        .iter()
-        .map(|id| id.to_string() )
-        .collect::<Vec<_>>();
+        let ItemFn { sig: Signature { inputs, output, .. }, .. } = parse_quote! {
+            fn fn__(jsonrpc_v2::Params(params): jsonrpc_v2::Params<Option<jsonrpc_v2::exp::serde_json::Value>>) 
+                -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<jsonrpc_v2::exp::serde_json::Value, jsonrpc_v2::Error>> + Send>> {}
+        };
 
-    let extract_positional = extract_positional(params.len());
-    let extract_named = extract_named(params.len());
+        let mut wrapped_fn = method.clone();
+        wrapped_fn.sig.asyncness = None;
+        wrapped_fn.sig.inputs = inputs;
+        wrapped_fn.sig.output = output;
 
-    let jsonrpc_v2_fn: ItemFn = {
-        if param_names.is_empty() {
-            parse_quote! {
-                pub #extern_token fn #new_fn_ident(jsonrpc_v2::Params(params): Params<Option<jsonrpc_v2::exp::serde_json::Value>>) 
-                    -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<jsonrpc_v2::exp::serde_json::Value, jsonrpc_v2::Error>> + Send>> {
-                    
-                    #method_as_inner
+        if externify {
 
-                    Box::pin(async move {
-                        if params.as_ref()
-                            .map(|x| x.as_object().map(|y| !y.is_empty()).unwrap_or(false) ||
-                                x.as_array().map(|y| !y.is_empty()).unwrap_or(false) )
-                            .unwrap_or(false) {
-                            Err(jsonrpc_v2::Error::INVALID_PARAMS)
-                        } else {
-                            let res = inner().await?;
-                            let val = jsonrpc_v2::exp::serde_json::to_value(res)?;
-                            Ok(val)
-                        }
-                    })
-                }
-            }
-        } else {
-            parse_quote! {
-                pub #extern_token fn #new_fn_ident(jsonrpc_v2::Params(params): Params<Option<jsonrpc_v2::exp::serde_json::Value>>) 
-                    -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<jsonrpc_v2::exp::serde_json::Value, jsonrpc_v2::Error>> + Send>> {
-                    
-                    #method_as_inner
-                    
-                    Box::pin(async move {
-                        match params {
-                            Some(jsonrpc_v2::exp::serde_json::Value::Object(map)) => {
-                                #extract_named
-                                if let Ok((#(#params),*)) = extract(map, #(#param_names),*) {
-                                    let res = inner(#(#params),*).await?;
-                                    let val = jsonrpc_v2::exp::serde_json::to_value(res)?;
-                                    return Ok(val);
-                                }
-                            },
-                            Some(jsonrpc_v2::exp::serde_json::Value::Array(vals)) => {
-                                #extract_positional
-                                if let Ok((#(#params),*)) = extract(vals) {
-                                    let res = inner(#(#params),*).await?;
-                                    let val = jsonrpc_v2::exp::serde_json::to_value(res)?;
-                                    return Ok(val);
-                                }
-                            },
-                            _ => {}
-                        }
-                        Err(jsonrpc_v2::Error::INVALID_PARAMS)
-                    })
-                }
-            }
+            let mut no_mangle: CustomOuterAttrs = parse_quote!(#[no_mangle]);
+
+            wrapped_fn.attrs.append(&mut no_mangle.0);
+
+            wrapped_fn.vis = parse_quote!(pub);
+            wrapped_fn.sig.abi = Some(parse_quote!(extern));
         }
-    };
 
+        let mut method_as_inner = quote!();
+        let mut method_call_ident = method_ident.clone();
+        
+        if let Some(wrapped_fn_ident) = wrapped_fn_ident {
+            wrapped_fn.sig.ident = wrapped_fn_ident;
+            method_as_outer = quote!(#method);
+        } else {
+            let jsonrpc_v2_inner_ident = Ident::new("jsonrpc_v2_inner", Span::call_site());
+            method_as_inner = {
+                let mut method = method.clone();
+                method.sig.ident = jsonrpc_v2_inner_ident.clone();
+                quote!(#method)
+            };
+            method_call_ident = jsonrpc_v2_inner_ident.clone();
+        }
+
+        let inner_call = quote!(#method_call_ident(#(#params),*).await?);
+
+        let block: Block = if params.is_empty() {
+            parse_quote!{{
+                #method_as_inner
+                Box::pin(async move {
+                    if params.as_ref()
+                        .map(|x| x.as_object().map(|y| !y.is_empty()).unwrap_or(false) ||
+                            x.as_array().map(|y| !y.is_empty()).unwrap_or(false) )
+                        .unwrap_or(false) {
+                        Err(jsonrpc_v2::Error::INVALID_PARAMS)
+                    } else {
+                        let res = #inner_call;
+                        let val = jsonrpc_v2::exp::serde_json::to_value(res)?;
+                        Ok(val)
+                    }
+                })
+            }}
+        } else {
+            let extract_positional = extract_positional(params.len());
+            let extract_named = extract_named(params.len());
+
+            let param_names = &params
+                .iter()
+                .map(|id| id.to_string() )
+                .collect::<Vec<_>>();
+
+            parse_quote!{{
+                #method_as_inner
+                
+                Box::pin(async move {
+                    match params {
+                        Some(jsonrpc_v2::exp::serde_json::Value::Object(map)) => {
+                            #extract_named
+                            if let Ok((#(#params),*)) = extract(map, #(#param_names),*) {
+                                let res = #inner_call;
+                                let val = jsonrpc_v2::exp::serde_json::to_value(res)?;
+                                return Ok(val);
+                            }
+                        },
+                        Some(jsonrpc_v2::exp::serde_json::Value::Array(vals)) => {
+                            #extract_positional
+                            if let Ok((#(#params),*)) = extract(vals) {
+                                let res = #inner_call;
+                                let val = jsonrpc_v2::exp::serde_json::to_value(res)?;
+                                return Ok(val);
+                            }
+                        },
+                        _ => {}
+                    }
+                    Err(jsonrpc_v2::Error::INVALID_PARAMS)
+                })
+            }}
+        };
+
+        wrapped_fn.block = Box::new(block);
+
+        wrapped_fn
+    };
 
     let out = quote! {
-        #maybe_method
-        #jsonrpc_v2_fn
+        #method_as_outer
+        #wrapped_fn
     };
 
-    // panic!("{}", out);
+    // panic!("{}", &out);
 
     out.into()
 }
