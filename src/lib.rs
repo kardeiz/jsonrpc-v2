@@ -1,9 +1,10 @@
 /*!
 A very small and very fast JSON-RPC 2.0 server-focused framework.
 
-Provides integrations for both `hyper` and `actix-web`. Enable features `actix-integration` or `hyper-integration` depending on need.
+Provides integrations for both `hyper` and `actix-web` (both 1.x and 2.x).
+Enable features `actix-web-v1-integration`, `actix-web-v2-integration`, or `hyper-integration` depending on need.
 
-`actix` is enabled by default. Make sure to add `default-features = false` if using `hyper`.
+`actix-web-v2-integration` is enabled by default. Make sure to add `default-features = false` if using `hyper` or `actix-web` 1.x.
 
 Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](trait.ErrorLike.html)
 for anything that implements `Display`, and the display value will be provided in the `message` field of the JSON-RPC 2.0 `Error` response.
@@ -36,7 +37,8 @@ async fn message(data: Data<String>) -> Result<String, Error> {
     Ok(String::from(&*data))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let rpc = Server::new()
         .with_data(Data::new(String::from("Hello!")))
         .with_method("sub", sub)
@@ -52,9 +54,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     })
     .bind("0.0.0.0:3000")?
-    .run()?;
-
-    Ok(())
+    .run()
+    .await
 }
 ```
 */
@@ -67,11 +68,17 @@ use std::sync::Arc;
 
 use futures::{
     future::{self, Future, FutureExt, TryFutureExt},
-    stream::StreamExt,
+    stream::{StreamExt, TryStreamExt},
 };
 
 use extensions::concurrent::Extensions;
 use std::{collections::HashMap, marker::PhantomData};
+
+#[cfg(not(feature = "bytes-v04"))]
+use bytes::Bytes;
+
+#[cfg(feature = "bytes-v04")]
+use bytes_v04::Bytes;
 
 #[cfg(feature = "macros")]
 pub use jsonrpc_v2_macros::jsonrpc_v2_method;
@@ -81,7 +88,6 @@ pub mod exp {
     pub use serde;
     pub use serde_json;
 }
-
 
 type BoxedSerialize = Box<dyn erased_serde::Serialize + Send>;
 
@@ -211,10 +217,10 @@ impl Default for Id {
 
 /// Builder struct for a request object
 #[derive(Default)]
-pub struct RequestBuilder<M=()> {
+pub struct RequestBuilder<M = ()> {
     id: Id,
     params: Option<Value>,
-    method: M
+    method: M,
 }
 
 impl<M> RequestBuilder<M> {
@@ -250,7 +256,7 @@ impl RequestBuilder<String> {
 
 /// Builder struct for a notification request object
 #[derive(Default)]
-pub struct NotificationBuilder<M=()> {
+pub struct NotificationBuilder<M = ()> {
     params: Option<Value>,
     method: M,
 }
@@ -549,7 +555,7 @@ where
     S: 'static,
     E: 'static,
     I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2) -> I  + Sync,
+    FN: Fn(T1, T2) -> I + Sync,
     T1: Send + 'static,
     T2: Send + 'static,
 {
@@ -816,7 +822,7 @@ impl SingleResponseObject {
 pub enum RequestKind {
     RequestObject(RequestObject),
     ManyRequestObjects(Vec<RequestObject>),
-    Bytes(bytes::Bytes),
+    Bytes(Bytes),
 }
 
 impl From<RequestObject> for RequestKind {
@@ -831,15 +837,15 @@ impl From<Vec<RequestObject>> for RequestKind {
     }
 }
 
-impl From<bytes::Bytes> for RequestKind {
-    fn from(t: bytes::Bytes) -> Self {
+impl From<Bytes> for RequestKind {
+    fn from(t: Bytes) -> Self {
         RequestKind::Bytes(t)
     }
 }
 
 impl<'a> From<&'a [u8]> for RequestKind {
     fn from(t: &'a [u8]) -> Self {
-        bytes::Bytes::from(t).into()
+        Bytes::from(t.to_vec()).into()
     }
 }
 
@@ -863,10 +869,11 @@ impl<R> Server<R>
 where
     R: Router + 'static,
 {
+    #[cfg(feature = "actix-web-v1-integration")]
     fn handle_bytes_compat(
         &self,
-        bytes: bytes::Bytes,
-    ) -> impl futures01::Future<Item = ResponseObjects, Error = ()> {
+        bytes: Bytes,
+    ) -> impl futures_v01::Future<Item = ResponseObjects, Error = ()> {
         self.handle_bytes(bytes).unit_error().boxed().compat()
     }
 
@@ -934,7 +941,7 @@ where
             })
     }
 
-    fn handle_bytes(&self, bytes: bytes::Bytes) -> impl Future<Output = ResponseObjects> {
+    fn handle_bytes(&self, bytes: Bytes) -> impl Future<Output = ResponseObjects> {
         if let Ok(raw_values) = OneOrManyRawValues::try_from_slice(bytes.as_ref()) {
             match raw_values {
                 OneOrManyRawValues::Many(raw_reqs) => {
@@ -999,52 +1006,94 @@ where
         }
     }
 
-    #[cfg(feature = "actix-integration")]
+    #[cfg(feature = "actix-web-v1-integration")]
     /// Converts the server into an `actix-web` compatible `NewService`
     pub fn into_actix_web_service(
         self: Arc<Self>,
-    ) -> impl actix_service::NewService<
-        Request = actix_web::dev::ServiceRequest,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
+    ) -> impl actix_service_v04::NewService<
+        Request = actix_web_v1::dev::ServiceRequest,
+        Response = actix_web_v1::dev::ServiceResponse,
+        Error = actix_web_v1::Error,
         Config = (),
         InitError = (),
     > {
-        use futures01::{Future, Stream};
+        use futures_v01::{Future, Stream};
 
         let service = Arc::clone(&self);
 
-        let inner = move |req: actix_web::dev::ServiceRequest| {
+        let inner = move |req: actix_web_v1::dev::ServiceRequest| {
             let service = Arc::clone(&service);
             let (req, payload) = req.into_parts();
             let rt = payload
-                .map_err(actix_web::Error::from)
-                .fold(actix_web::web::BytesMut::new(), move |mut body, chunk| {
+                .map_err(actix_web_v1::Error::from)
+                .fold(actix_web_v1::web::BytesMut::new(), move |mut body, chunk| {
                     body.extend_from_slice(&chunk);
-                    Ok::<_, actix_web::Error>(body)
+                    Ok::<_, actix_web_v1::Error>(body)
                 })
                 .and_then(move |bytes| {
                     service.handle_bytes_compat(bytes.freeze()).then(|res| match res {
                         Ok(res_inner) => match res_inner {
-                            ResponseObjects::Empty => Ok(actix_web::dev::ServiceResponse::new(
+                            ResponseObjects::Empty => Ok(actix_web_v1::dev::ServiceResponse::new(
                                 req,
-                                actix_web::HttpResponse::NoContent().finish(),
+                                actix_web_v1::HttpResponse::NoContent().finish(),
                             )),
-                            json => Ok(actix_web::dev::ServiceResponse::new(
+                            json => Ok(actix_web_v1::dev::ServiceResponse::new(
                                 req,
-                                actix_web::HttpResponse::Ok().json(json),
+                                actix_web_v1::HttpResponse::Ok().json(json),
                             )),
                         },
-                        Err(_) => Ok(actix_web::dev::ServiceResponse::new(
+                        Err(_) => Ok(actix_web_v1::dev::ServiceResponse::new(
                             req,
-                            actix_web::HttpResponse::InternalServerError().into(),
+                            actix_web_v1::HttpResponse::InternalServerError().into(),
                         )),
                     })
                 });
             rt
         };
 
-        actix_service::service_fn::<_, _, _, ()>(inner)
+        actix_service_v04::service_fn::<_, _, _, ()>(inner)
+    }
+
+    #[cfg(feature = "actix-web-v2-integration")]
+    /// Converts the server into an `actix-web` compatible `NewService`
+    pub fn into_actix_web_service(
+        self: Arc<Self>,
+    ) -> impl actix_service_v1::ServiceFactory<
+        Request = actix_web_v2::dev::ServiceRequest,
+        Response = actix_web_v2::dev::ServiceResponse,
+        Error = actix_web_v2::Error,
+        Config = (),
+        InitError = (),
+    > {
+        let service = Arc::clone(&self);
+
+        let inner = move |req: actix_web_v2::dev::ServiceRequest| {
+            let service = Arc::clone(&service);
+            let (req, payload) = req.into_parts();
+            let rt = payload
+                .map_err(actix_web_v2::Error::from)
+                .try_fold(actix_web_v2::web::BytesMut::new(), move |mut body, chunk| {
+                    async move {
+                        body.extend_from_slice(&chunk);
+                        Ok::<_, actix_web_v2::Error>(body)
+                    }
+                })
+                .and_then(move |bytes| {
+                    service.handle_bytes(bytes.freeze()).map(|res| match res {
+                        ResponseObjects::Empty => Ok(actix_web_v2::dev::ServiceResponse::new(
+                            req,
+                            actix_web_v2::HttpResponse::NoContent().finish(),
+                        )),
+                        json => Ok(actix_web_v2::dev::ServiceResponse::new(
+                            req,
+                            actix_web_v2::HttpResponse::Ok().json(json),
+                        )),
+                    })
+                });
+            rt
+        };
+
+        actix_service_v1::fn_service::<_, _, _, _, _, _>(inner)
     }
 
     #[cfg(feature = "hyper-integration")]
@@ -1053,16 +1102,40 @@ where
         Hyper(self)
     }
 
-    #[cfg(all(feature = "actix-integration", not(feature = "hyper-integration")))]
+    #[cfg(all(
+        feature = "actix-web-v1-integration",
+        not(feature = "hyper-integration"),
+        not(feature = "actix-web-v2-integration")
+    ))]
     /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
     ///
     /// Is not provided when both features are enabled
     pub fn into_web_service(
         self: Arc<Self>,
-    ) -> impl actix_service::NewService<
-        Request = actix_web::dev::ServiceRequest,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
+    ) -> impl actix_service_v04::NewService<
+        Request = actix_web_v1::dev::ServiceRequest,
+        Response = actix_web_v1::dev::ServiceResponse,
+        Error = actix_web_v1::Error,
+        Config = (),
+        InitError = (),
+    > {
+        self.into_actix_web_service()
+    }
+
+    #[cfg(all(
+        feature = "actix-web-v2-integration",
+        not(feature = "hyper-integration"),
+        not(feature = "actix-web-v1-integration")
+    ))]
+    /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
+    ///
+    /// Is not provided when both features are enabled
+    pub fn into_web_service(
+        self: Arc<Self>,
+    ) -> impl actix_service_v1::ServiceFactory<
+        Request = actix_web_v2::dev::ServiceRequest,
+        Response = actix_web_v2::dev::ServiceResponse,
+        Error = actix_web_v2::Error,
         Config = (),
         InitError = (),
     > {
@@ -1072,7 +1145,11 @@ where
     /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
     ///
     /// Is not provided when both features are enabled
-    #[cfg(all(feature = "hyper-integration", not(feature = "actix-integration")))]
+    #[cfg(all(
+        feature = "hyper-integration",
+        not(feature = "actix-web-v1-integration"),
+        not(feature = "actix-web-v2-integration")
+    ))]
     pub fn into_web_service(self) -> Hyper<R> {
         self.into_hyper_web_service()
     }

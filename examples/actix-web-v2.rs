@@ -1,3 +1,4 @@
+use actix_web_v2::{guard, web, App, HttpServer};
 use jsonrpc_v2::*;
 
 #[derive(serde::Deserialize)]
@@ -9,7 +10,7 @@ struct TwoNums {
 pub struct Foo(String);
 
 async fn test(Params(params): Params<serde_json::Value>) -> Result<String, Error> {
-    Ok(serde_json::to_string_pretty(&params)?)
+    Ok(serde_json::to_string_pretty(&params).unwrap())
 }
 
 async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
@@ -24,25 +25,21 @@ async fn message(data: Data<Foo>) -> Result<String, Error> {
     Ok(String::from(&(&*data.0).0))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let rpc = Server::new()
-        .with_data(Data::new(String::from("Hello!")))
+        .with_data(Data::new(Foo(String::from("Hello!"))))
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("test", test)
         .with_method("message", message)
         .finish();
 
-    actix_web::HttpServer::new(move || {
+    HttpServer::new(move || {
         let rpc = rpc.clone();
-        actix_web::App::new().service(
-            actix_web::web::service("/api")
-                .guard(actix_web::guard::Post())
-                .finish(rpc.into_web_service()),
-        )
+        App::new().service(web::service("/api").guard(guard::Post()).finish(rpc.into_web_service()))
     })
     .bind("0.0.0.0:3000")?
-    .run()?;
-
-    Ok(())
+    .run()
+    .await
 }

@@ -2,7 +2,7 @@
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
 edition = "2018"
 name = "jsonrpc-v2"
-version = "0.5.0-alpha.1"
+version = "0.5.0"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
@@ -10,24 +10,28 @@ readme = "README.md"
 repository = "https://github.com/kardeiz/jsonrpc-v2"
 
 [features]
-default = ["actix-integration"]
+default = ["actix-web-v2-integration"]
 easy-errors = []
-actix-integration = ["actix-web", "actix-service"]
+actix-web-v1-integration = ["actix-web-v1", "actix-service-v04", "futures-v01", "bytes-v04"]
+actix-web-v2-integration = ["actix-web-v2", "actix-service-v1"]
 hyper-integration = ["hyper", "tower-service"]
 macros = ["jsonrpc-v2-macros"]
 
 [dependencies]
-bytes = "0.4"
+bytes = "0.5"
 erased-serde = "0.3"
-futures = { version = "0.3.1", features = ["compat"] }
-futures01 = { version = "0.1", package = "futures" }
-actix-web = { version = "1", optional = true }
-actix-service = { version = "0.4", optional = true }
-hyper = { version = "0.13.0-alpha.4", optional = true }
+futures = { version = "0.3", features = ["compat"] }
+futures-v01 = { version = "0.1", package = "futures", optional = true }
+hyper = { version = "0.13.1", optional = true }
 async-trait = "0.1.17"
-tower-service = { version = "0.3.0-alpha.2", optional = true }
+tower-service = { version = "0.3", optional = true }
 extensions = "0.2"
 jsonrpc-v2-macros = { version = "0.1.0", path = "./jsonrpc-v2-macros", optional = true }
+actix-web-v2 = { version = "2", package = "actix-web", optional = true }
+actix-service-v1 = { version = "1", package = "actix-service", optional = true }
+actix-web-v1 = { version = "1", package = "actix-web", optional = true }
+actix-service-v04 = { version = "0.4", package = "actix-service", optional = true }
+bytes-v04 = { version = "0.4", package = "bytes", optional = true }
 
 [dependencies.serde]
 features = ["derive"]
@@ -38,6 +42,6 @@ features = ["raw_value"]
 version = "1"
 
 [dev-dependencies]
-bytes = "0.4.11"
 http = "0.1.15"
-tokio = "0.2.0-alpha.6"
+tokio = "0.2"
+actix-rt = "1"

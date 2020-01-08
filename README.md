@@ -5,9 +5,10 @@
 
 A very small and very fast JSON-RPC 2.0 server-focused framework.
 
-Provides integrations for both `hyper` and `actix-web`. Enable features `actix-integration` or `hyper-integration` depending on need.
+Provides integrations for both `hyper` and `actix-web` (both 1.x and 2.x).
+Enable features `actix-web-v1-integration`, `actix-web-v2-integration`, or `hyper-integration` depending on need.
 
-`actix` is enabled by default. Make sure to add `default-features = false` if using `hyper`.
+`actix-web-v2-integration` is enabled by default. Make sure to add `default-features = false` if using `hyper` or `actix-web` 1.x.
 
 Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](trait.ErrorLike.html)
 for anything that implements `Display`, and the display value will be provided in the `message` field of the JSON-RPC 2.0 `Error` response.
@@ -40,7 +41,8 @@ async fn message(data: Data<String>) -> Result<String, Error> {
     Ok(String::from(&*data))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let rpc = Server::new()
         .with_data(Data::new(String::from("Hello!")))
         .with_method("sub", sub)
@@ -56,12 +58,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     })
     .bind("0.0.0.0:3000")?
-    .run()?;
-
-    Ok(())
+    .run()
+    .await
 }
 ```
 
-Current version: 0.4.1
+Current version: 0.5.0
 
 License: MIT
