@@ -22,13 +22,6 @@ async fn message(data: Data<String>) -> Result<String, Error> {
 pub async fn message_test(a: i32, b: i32) -> Result<String, Error> {
     Ok(format!("{} + {}", a, b))
 }
-// async fn message_test_2(params: Params<Option<serde_json::Value>>) -> Result<serde_json::Value, Error> {
-//     message_test(params).await
-// }
-
-// async fn message_test(Params(p): Params<Option<serde_json::Value>>) -> Result<String, Error> {
-//     Ok(format!("{}", "HI"))
-// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

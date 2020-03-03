@@ -1,5 +1,5 @@
 use actix_web_v2::{guard, web, App, HttpServer};
-use jsonrpc_v2::*;
+use jsonrpc_v2::{Data, Error, Params, Server};
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
