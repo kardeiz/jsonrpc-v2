@@ -17,7 +17,7 @@ the `Params` or `Data`), and should return a `Result<Item, Error>` where the `It
 # Usage
 
 ```rust,no_run
-use jsonrpc_v2::{Data, Error, Params, Server};
+use jsonrpc_v2::*;
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
