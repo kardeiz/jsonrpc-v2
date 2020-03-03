@@ -1,6 +1,6 @@
 # jsonrpc-v2
 
-[![Docs](https://docs.rs/jsonrpc-v2/badge.svg)](https://docs.rs/crate/jsonrpc-v2/)
+[![Docs](https://docs.rs/jsonrpc-v2/badge.svg)](https://docs.rs/jsonrpc-v2/)
 [![Crates.io](https://img.shields.io/crates/v/jsonrpc-v2.svg)](https://crates.io/crates/jsonrpc-v2)
 
 A very small and very fast JSON-RPC 2.0 server-focused framework.
@@ -10,10 +10,10 @@ Enable features `actix-web-v1-integration`, `actix-web-v2-integration`, or `hype
 
 `actix-web-v2-integration` is enabled by default. Make sure to add `default-features = false` if using `hyper` or `actix-web` 1.x.
 
-Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](trait.ErrorLike.html)
+Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](https://docs.rs/jsonrpc-v2/*/jsonrpc_v2/trait.ErrorLike.html)
 for anything that implements `Display`, and the display value will be provided in the `message` field of the JSON-RPC 2.0 `Error` response.
 
-Otherwise, custom errors should implement [`ErrorLike`](trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response.
+Otherwise, custom errors should implement [`ErrorLike`](https://docs.rs/jsonrpc-v2/*/jsonrpc_v2/trait.ErrorLike.html) to map errors to the JSON-RPC 2.0 `Error` response.
 
 Individual method handlers are `async` functions that can take various kinds of args (things that can be extracted from the request, like
 the `Params` or `Data`), and should return a `Result<Item, Error>` where the `Item` is serializable. See examples below.
@@ -63,6 +63,6 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-Current version: 0.5.0
+Current version: 0.5.1
 
 License: MIT
