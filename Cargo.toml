@@ -2,7 +2,7 @@
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
 edition = "2018"
 name = "jsonrpc-v2"
-version = "0.5.1"
+version = "0.5.2"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
@@ -43,5 +43,5 @@ version = "1"
 
 [dev-dependencies]
 http = "0.1.15"
-tokio = "0.2"
+tokio = { version = "0.2", features = ["full"] }
 actix-rt = "1"

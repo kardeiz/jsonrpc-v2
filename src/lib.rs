@@ -17,7 +17,7 @@ the `Params` or `Data`), and should return a `Result<Item, Error>` where the `It
 # Usage
 
 ```rust,no_run
-use jsonrpc_v2::*;
+use jsonrpc_v2::{Data, Error, Params, Server};
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
@@ -67,9 +67,15 @@ use serde_json::{value::RawValue, Value};
 use std::sync::Arc;
 
 use futures::{
-    future::{self, Future, FutureExt, TryFutureExt},
-    stream::{StreamExt, TryStreamExt},
+    future::{self, Future, FutureExt},
+    stream::StreamExt,
 };
+
+#[cfg(any(feature = "actix-web-v1", feature = "actix-web-v2"))]
+use futures::future::TryFutureExt;
+
+#[cfg(feature = "actix-web-v2")]
+use futures::stream::TryStreamExt;
 
 use extensions::concurrent::Extensions;
 use std::{collections::HashMap, marker::PhantomData};
@@ -923,12 +929,10 @@ where
         reqs.into_iter()
             .map(|r| self.handle_request_object(r))
             .collect::<futures::stream::FuturesUnordered<_>>()
-            .filter_map(|res| {
-                async move {
-                    match res {
-                        SingleResponseObject::One(r) => Some(r),
-                        _ => None,
-                    }
+            .filter_map(|res| async move {
+                match res {
+                    SingleResponseObject::One(r) => Some(r),
+                    _ => None,
                 }
             })
             .collect::<Vec<_>>()
@@ -1072,11 +1076,9 @@ where
             let (req, payload) = req.into_parts();
             let rt = payload
                 .map_err(actix_web_v2::Error::from)
-                .try_fold(actix_web_v2::web::BytesMut::new(), move |mut body, chunk| {
-                    async move {
-                        body.extend_from_slice(&chunk);
-                        Ok::<_, actix_web_v2::Error>(body)
-                    }
+                .try_fold(actix_web_v2::web::BytesMut::new(), move |mut body, chunk| async move {
+                    body.extend_from_slice(&chunk);
+                    Ok::<_, actix_web_v2::Error>(body)
                 })
                 .and_then(move |bytes| {
                     service.handle_bytes(bytes.freeze()).map(|res| match res {
@@ -1150,7 +1152,7 @@ where
         not(feature = "actix-web-v1-integration"),
         not(feature = "actix-web-v2-integration")
     ))]
-    pub fn into_web_service(self) -> Hyper<R> {
+    pub fn into_web_service(self: Arc<Self>) -> Hyper<R> {
         self.into_hyper_web_service()
     }
 }
@@ -1179,14 +1181,24 @@ where
         let service = Arc::clone(&self.0);
 
         let rt = async move {
-            let mut buf = hyper::Chunk::default();
+            let mut buf = if let Some(content_length) = req
+                .headers()
+                .get(hyper::header::CONTENT_LENGTH)
+                .and_then(|x| x.to_str().ok())
+                .and_then(|x| x.parse().ok())
+            {
+                bytes::BytesMut::with_capacity(content_length)
+            } else {
+                bytes::BytesMut::default()
+            };
+
             let mut body = req.into_body();
 
             while let Some(chunk) = body.next().await {
                 buf.extend(chunk?);
             }
 
-            match service.handle_bytes(buf.into_bytes()).await {
+            match service.handle_bytes(buf.freeze()).await {
                 ResponseObjects::Empty => hyper::Response::builder()
                     .status(hyper::StatusCode::NO_CONTENT)
                     .body(hyper::Body::from(Vec::<u8>::new()))
