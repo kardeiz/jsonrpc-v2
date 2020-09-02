@@ -7,7 +7,7 @@ description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/kardeiz/jsonrpc-v2"
+repository = "https://github.com/Deniallugo/jsonrpc-v2"
 
 [features]
 default = ["actix-web-v2-integration"]
@@ -32,6 +32,9 @@ actix-service-v1 = { version = "1", package = "actix-service", optional = true }
 actix-web-v1 = { version = "1", package = "actix-web", optional = true }
 actix-service-v04 = { version = "0.4", package = "actix-service", optional = true }
 bytes-v04 = { version = "0.4", package = "bytes", optional = true }
+log = "0.4.8"
+anyhow = "1.0"
+paperclip = {version = "0.4.0", features = ["v2", "actix"] }
 
 [dependencies.serde]
 features = ["derive"]

@@ -7,7 +7,7 @@ description = "Proc macros for jsonrpc-v2"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
 readme = "../README.md"
-repository = "https://github.com/kardeiz/jsonrpc-v2"
+repository = "https://github.com/Deniallugo/jsonrpc-v2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

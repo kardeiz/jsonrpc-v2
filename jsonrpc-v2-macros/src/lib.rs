@@ -20,7 +20,7 @@ impl parse::Parse for CustomOuterAttrs {
 pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
     let method = parse_macro_input!(item as ItemFn);
 
-    let method_ident = &method.sig.ident;    
+    let method_ident = &method.sig.ident;
 
     let attrs = parse_macro_input!(attrs as AttributeArgs);
 
@@ -30,16 +30,16 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .filter_map(|x| match *x {
             FnArg::Typed(ref y) => Some(y),
-            _ => None
+            _ => None,
         })
         .filter_map(|x| match *x.pat {
             Pat::Ident(ref y) => Some(y),
-            _ => None
+            _ => None,
         })
         .map(|x| &x.ident)
         .collect::<Vec<_>>();
 
-    let mut wrapped_fn_ident = None;    
+    let mut wrapped_fn_ident = None;
     let wrapped_fn_path: Path = parse_quote!(wrapped_fn);
     let externify_path: Path = parse_quote!(externify);
 
@@ -47,16 +47,16 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .filter_map(|x| match x {
             NestedMeta::Meta(y) => Some(y),
-            _ => None
+            _ => None,
         })
         .filter_map(|x| match x {
             Meta::NameValue(y) => Some(y),
-            _ => None
+            _ => None,
         })
-        .find(|x| &x.path == &wrapped_fn_path)
+        .find(|x| x.path == wrapped_fn_path)
         .and_then(|x| match x.lit {
             Lit::Str(ref y) => Some(y),
-            _ => None
+            _ => None,
         })
     {
         wrapped_fn_ident = Some(Ident::new(&wrapped_fn_name_lit.value(), Span::call_site()));
@@ -66,24 +66,27 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .filter_map(|x| match x {
             NestedMeta::Meta(y) => Some(y),
-            _ => None
+            _ => None,
         })
         .filter_map(|x| match x {
             Meta::NameValue(y) => Some(y),
-            _ => None
+            _ => None,
         })
-        .find(|x| &x.path == &externify_path)
+        .find(|x| x.path == externify_path)
         .map(|x| match x.lit {
             Lit::Bool(ref y) => y.value,
-            _ => false
-        }).unwrap_or(false);
+            _ => false,
+        })
+        .unwrap_or(false);
 
     let mut method_as_outer = quote!();
 
     let wrapped_fn = {
-
-        let ItemFn { sig: Signature { inputs, output, .. }, .. } = parse_quote! {
-            fn fn__(jsonrpc_v2::Params(params): jsonrpc_v2::Params<Option<jsonrpc_v2::exp::serde_json::Value>>) 
+        let ItemFn {
+            sig: Signature { inputs, output, .. },
+            ..
+        } = parse_quote! {
+            fn fn__(jsonrpc_v2::Params(params): jsonrpc_v2::Params<Option<jsonrpc_v2::exp::serde_json::Value>>)
                 -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<jsonrpc_v2::exp::serde_json::Value, jsonrpc_v2::Error>> + Send>> {}
         };
 
@@ -93,7 +96,6 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
         wrapped_fn.sig.output = output;
 
         if externify {
-
             let mut no_mangle: CustomOuterAttrs = parse_quote!(#[no_mangle]);
 
             wrapped_fn.attrs.append(&mut no_mangle.0);
@@ -104,7 +106,7 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
 
         let mut method_as_inner = quote!();
         let mut method_call_ident = method_ident.clone();
-        
+
         if let Some(wrapped_fn_ident) = wrapped_fn_ident {
             wrapped_fn.sig.ident = wrapped_fn_ident;
             method_as_outer = quote!(#method);
@@ -115,13 +117,13 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
                 method.sig.ident = jsonrpc_v2_inner_ident.clone();
                 quote!(#method)
             };
-            method_call_ident = jsonrpc_v2_inner_ident.clone();
+            method_call_ident = jsonrpc_v2_inner_ident;
         }
 
         let inner_call = quote!(#method_call_ident(#(#params),*).await?);
 
         let block: Block = if params.is_empty() {
-            parse_quote!{{
+            parse_quote! {{
                 #method_as_inner
                 Box::pin(async move {
                     if params.as_ref()
@@ -140,14 +142,11 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
             let extract_positional = extract_positional(params.len());
             let extract_named = extract_named(params.len());
 
-            let param_names = &params
-                .iter()
-                .map(|id| id.to_string() )
-                .collect::<Vec<_>>();
+            let param_names = &params.iter().map(|id| id.to_string()).collect::<Vec<_>>();
 
-            parse_quote!{{
+            parse_quote! {{
                 #method_as_inner
-                
+
                 Box::pin(async move {
                     match params {
                         Some(jsonrpc_v2::exp::serde_json::Value::Object(map)) => {
@@ -189,21 +188,25 @@ pub fn jsonrpc_v2_method(attrs: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn extract_positional(up_to: usize) -> proc_macro2::TokenStream {
-    let tys =
-        (0..up_to).map(|i| Ident::new(&format!("T{}", i), Span::call_site())).collect::<Vec<_>>();
+    let tys = (0..up_to)
+        .map(|i| Ident::new(&format!("T{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
     let gen = tys
         .iter()
         .map(|x| quote!(#x: jsonrpc_v2::exp::serde::de::DeserializeOwned))
         .collect::<Vec<_>>();
 
-    let ts =
-        (0..up_to).map(|i| Ident::new(&format!("t{}", i), Span::call_site())).collect::<Vec<_>>();
+    let ts = (0..up_to)
+        .map(|i| Ident::new(&format!("t{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
 
     let mut ts_rev = ts.clone();
     ts_rev.reverse();
 
     let exprs = (0..up_to)
-        .map(|_| quote!(jsonrpc_v2::exp::serde_json::from_value(vals.pop().unwrap()).map_err(|_| ())?))
+        .map(|_| {
+            quote!(jsonrpc_v2::exp::serde_json::from_value(vals.pop().unwrap()).map_err(|_| ())?)
+        })
         .collect::<Vec<_>>();
 
     quote! {
@@ -218,20 +221,26 @@ fn extract_positional(up_to: usize) -> proc_macro2::TokenStream {
 }
 
 fn extract_named(up_to: usize) -> proc_macro2::TokenStream {
-    let tys =
-        (0..up_to).map(|i| Ident::new(&format!("T{}", i), Span::call_site())).collect::<Vec<_>>();
+    let tys = (0..up_to)
+        .map(|i| Ident::new(&format!("T{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
     let gen = tys
         .iter()
         .map(|x| quote!(#x: jsonrpc_v2::exp::serde::de::DeserializeOwned))
         .collect::<Vec<_>>();
 
-    let ts =
-        (0..up_to).map(|i| Ident::new(&format!("t{}", i), Span::call_site())).collect::<Vec<_>>();
+    let ts = (0..up_to)
+        .map(|i| Ident::new(&format!("t{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
 
-    let names =
-        (0..up_to).map(|i| Ident::new(&format!("n{}", i), Span::call_site())).collect::<Vec<_>>();
+    let names = (0..up_to)
+        .map(|i| Ident::new(&format!("n{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
 
-    let names_and_tys = names.iter().map(|x| quote!(#x: &'static str)).collect::<Vec<_>>();
+    let names_and_tys = names
+        .iter()
+        .map(|x| quote!(#x: &'static str))
+        .collect::<Vec<_>>();
 
     let mains = ts
         .iter()
