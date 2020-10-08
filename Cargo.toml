@@ -12,7 +12,7 @@ repository = "https://github.com/kardeiz/jsonrpc-v2"
 [features]
 default = ["actix-web-v2-integration"]
 easy-errors = []
-actix-web-v1-integration = ["actix-web-v1", "actix-service-v04", "futures-v01", "bytes-v04"]
+actix-web-v1-integration = ["actix-web-v1", "actix-service-v04", "futures-v01", "bytes-v04", "futures/compat"]
 actix-web-v2-integration = ["actix-web-v2", "actix-service-v1"]
 hyper-integration = ["hyper", "tower-service"]
 macros = ["jsonrpc-v2-macros"]
@@ -20,7 +20,7 @@ macros = ["jsonrpc-v2-macros"]
 [dependencies]
 bytes = "0.5"
 erased-serde = "0.3"
-futures = { version = "0.3", features = ["compat"] }
+futures = "0.3"
 futures-v01 = { version = "0.1", package = "futures", optional = true }
 hyper = { version = "0.13.1", optional = true }
 async-trait = "0.1.17"
