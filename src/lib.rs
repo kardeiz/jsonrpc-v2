@@ -71,17 +71,17 @@ use futures::{
     stream::StreamExt,
 };
 
-#[cfg(any(feature = "actix-web-v1", feature = "actix-web-v2"))]
+#[cfg(any(feature = "actix-web-v1", feature = "actix-web-v2", feature = "actix-web-v3"))]
 use futures::future::TryFutureExt;
 
-#[cfg(feature = "actix-web-v2")]
+#[cfg(any(feature = "actix-web-v2", feature = "actix-web-v3"))]
 use futures::stream::TryStreamExt;
 
 use extensions::concurrent::Extensions;
 use std::{collections::HashMap, marker::PhantomData};
 
-#[cfg(not(feature = "bytes-v04"))]
-use bytes::Bytes;
+#[cfg(feature = "bytes-v05")]
+use bytes_v05::Bytes;
 
 #[cfg(feature = "bytes-v04")]
 use bytes_v04::Bytes;
@@ -1098,6 +1098,46 @@ where
         actix_service_v1::fn_service::<_, _, _, _, _, _>(inner)
     }
 
+    #[cfg(feature = "actix-web-v3-integration")]
+    /// Converts the server into an `actix-web` compatible `NewService`
+    pub fn into_actix_web_service(
+        self: Arc<Self>,
+    ) -> impl actix_service_v1::ServiceFactory<
+        Request = actix_web_v3::dev::ServiceRequest,
+        Response = actix_web_v3::dev::ServiceResponse,
+        Error = actix_web_v3::Error,
+        Config = (),
+        InitError = (),
+    > {
+        let service = Arc::clone(&self);
+
+        let inner = move |req: actix_web_v3::dev::ServiceRequest| {
+            let service = Arc::clone(&service);
+            let (req, payload) = req.into_parts();
+            let rt = payload
+                .map_err(actix_web_v3::Error::from)
+                .try_fold(actix_web_v3::web::BytesMut::new(), move |mut body, chunk| async move {
+                    body.extend_from_slice(&chunk);
+                    Ok::<_, actix_web_v3::Error>(body)
+                })
+                .and_then(move |bytes| {
+                    service.handle_bytes(bytes.freeze()).map(|res| match res {
+                        ResponseObjects::Empty => Ok(actix_web_v3::dev::ServiceResponse::new(
+                            req,
+                            actix_web_v3::HttpResponse::NoContent().finish(),
+                        )),
+                        json => Ok(actix_web_v3::dev::ServiceResponse::new(
+                            req,
+                            actix_web_v3::HttpResponse::Ok().json(json),
+                        )),
+                    })
+                });
+            rt
+        };
+
+        actix_service_v1::fn_service::<_, _, _, _, _, _>(inner)
+    }
+
     #[cfg(feature = "hyper-integration")]
     /// Converts the server into an `actix-web` compatible `NewService`
     pub fn into_hyper_web_service(self: Arc<Self>) -> Hyper<R> {
@@ -1107,7 +1147,8 @@ where
     #[cfg(all(
         feature = "actix-web-v1-integration",
         not(feature = "hyper-integration"),
-        not(feature = "actix-web-v2-integration")
+        not(feature = "actix-web-v2-integration"),
+        not(feature = "actix-web-v3-integration")
     ))]
     /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
     ///
@@ -1127,7 +1168,8 @@ where
     #[cfg(all(
         feature = "actix-web-v2-integration",
         not(feature = "hyper-integration"),
-        not(feature = "actix-web-v1-integration")
+        not(feature = "actix-web-v1-integration"),
+        not(feature = "actix-web-v3-integration")
     ))]
     /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
     ///
@@ -1144,13 +1186,35 @@ where
         self.into_actix_web_service()
     }
 
+    #[cfg(all(
+        feature = "actix-web-v3-integration",
+        not(feature = "hyper-integration"),
+        not(feature = "actix-web-v1-integration"),
+        not(feature = "actix-web-v2-integration")
+    ))]
+    /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
+    ///
+    /// Is not provided when both features are enabled
+    pub fn into_web_service(
+        self: Arc<Self>,
+    ) -> impl actix_service_v1::ServiceFactory<
+        Request = actix_web_v3::dev::ServiceRequest,
+        Response = actix_web_v3::dev::ServiceResponse,
+        Error = actix_web_v3::Error,
+        Config = (),
+        InitError = (),
+    > {
+        self.into_actix_web_service()
+    }
+
     /// Is an alias to `into_actix_web_service` or `into_hyper_web_service` depending on which feature is enabled
     ///
     /// Is not provided when both features are enabled
     #[cfg(all(
         feature = "hyper-integration",
         not(feature = "actix-web-v1-integration"),
-        not(feature = "actix-web-v2-integration")
+        not(feature = "actix-web-v2-integration"),
+        not(feature = "actix-web-v3-integration")
     ))]
     pub fn into_web_service(self: Arc<Self>) -> Hyper<R> {
         self.into_hyper_web_service()
