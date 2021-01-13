@@ -10,15 +10,15 @@ readme = "README.md"
 repository = "https://github.com/kardeiz/jsonrpc-v2"
 
 [features]
-default = ["actix-web-v2-integration"]
+default = ["actix-web-v3-integration"]
 easy-errors = []
 actix-web-v1-integration = ["actix-web-v1", "actix-service-v04", "futures-v01", "bytes-v04", "futures/compat"]
-actix-web-v2-integration = ["actix-web-v2", "actix-service-v1"]
+actix-web-v2-integration = ["actix-web-v2", "actix-service-v1", "bytes-v05"]
+actix-web-v3-integration = ["actix-web-v3", "actix-service-v1", "bytes-v05"]
 hyper-integration = ["hyper", "tower-service"]
 macros = ["jsonrpc-v2-macros"]
 
 [dependencies]
-bytes = "0.5"
 erased-serde = "0.3"
 futures = "0.3"
 futures-v01 = { version = "0.1", package = "futures", optional = true }
@@ -27,11 +27,13 @@ async-trait = "0.1.17"
 tower-service = { version = "0.3", optional = true }
 extensions = "0.2"
 jsonrpc-v2-macros = { version = "0.1.0", path = "./jsonrpc-v2-macros", optional = true }
+actix-web-v3 = { version = "3", package = "actix-web", optional = true }
 actix-web-v2 = { version = "2", package = "actix-web", optional = true }
 actix-service-v1 = { version = "1", package = "actix-service", optional = true }
 actix-web-v1 = { version = "1", package = "actix-web", optional = true }
 actix-service-v04 = { version = "0.4", package = "actix-service", optional = true }
 bytes-v04 = { version = "0.4", package = "bytes", optional = true }
+bytes-v05 = { version = "0.5", package = "bytes", optional = true }
 
 [dependencies.serde]
 features = ["derive"]
