@@ -63,6 +63,6 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-Current version: 0.5.3
+Current version: 0.6.0
 
 License: MIT
