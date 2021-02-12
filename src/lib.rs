@@ -100,12 +100,12 @@ type BoxedSerialize = Box<dyn erased_serde::Serialize + Send>;
 /// Error object in a response
 #[derive(Serialize)]
 #[serde(untagged)]
-pub enum Error {
+pub enum Error<T = BoxedSerialize> {
     Full {
         code: i64,
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        data: Option<BoxedSerialize>,
+        data: Option<T>,
     },
     Provided {
         code: i64,
@@ -309,7 +309,7 @@ pub struct RequestObject {
     params: Option<InnerParams>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Option<Id>>,
+    pub id: Option<Option<Id>>,
 }
 
 /// Request/Notification object
@@ -321,7 +321,7 @@ struct BytesRequestObject {
     params: Option<Box<RawValue>>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Option<Id>>,
+    pub id: Option<Option<Id>>,
 }
 
 impl From<BytesRequestObject> for RequestObject {
