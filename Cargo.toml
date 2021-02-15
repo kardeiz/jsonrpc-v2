@@ -12,7 +12,13 @@ repository = "https://github.com/kardeiz/jsonrpc-v2"
 [features]
 default = ["actix-web-v3-integration"]
 easy-errors = []
-actix-web-v1-integration = ["actix-web-v1", "actix-service-v04", "futures-v01", "bytes-v04", "futures/compat"]
+actix-web-v1-integration = [
+    "actix-web-v1",
+    "actix-service-v04",
+    "futures-v01",
+    "bytes-v04",
+    "futures/compat"
+]
 actix-web-v2-integration = ["actix-web-v2", "actix-service-v1", "bytes-v05"]
 actix-web-v3-integration = ["actix-web-v3", "actix-service-v1", "bytes-v05"]
 hyper-integration = ["hyper", "tower-service", "bytes-v05"]

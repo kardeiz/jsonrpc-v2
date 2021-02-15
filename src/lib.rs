@@ -309,19 +309,19 @@ pub struct RequestObject {
     params: Option<InnerParams>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Option<Id>>,
+    pub id: Option<Option<Id>>,
 }
 
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct BytesRequestObject {
-    jsonrpc: V2,
-    method: Box<str>,
-    params: Option<Box<RawValue>>,
+    pub jsonrpc: V2,
+    pub method: Box<str>,
+    pub params: Option<Box<RawValue>>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Option<Id>>,
+    pub id: Option<Option<Id>>,
 }
 
 impl From<BytesRequestObject> for RequestObject {
