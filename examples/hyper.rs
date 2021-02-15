@@ -10,7 +10,13 @@ async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
     Ok(params.a + params.b)
 }
 
-async fn sub(Params(params): Params<(usize, usize)>) -> Result<usize, Error> {
+async fn sub(
+    Params(params): Params<(usize, usize)>,
+    id: Option<jsonrpc_v2::Id>,
+    method: jsonrpc_v2::Method,
+) -> Result<usize, Error> {
+    dbg!(id);
+    dbg!(method.as_str());
     Ok(params.0 - params.1)
 }
 
@@ -29,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = "0.0.0.0:3000".parse().unwrap();
 
-    let server = hyper::Server::bind(&addr).serve(rpc.into_hyper_web_service());
+    let server = hyper::server::Server::bind(&addr).serve(rpc.into_hyper_web_service());
 
     server.await?;
 

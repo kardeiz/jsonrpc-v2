@@ -221,6 +221,22 @@ impl Default for Id {
     }
 }
 
+/// Method string wrapper, for `FromRequest` extraction
+#[derive(Debug)]
+pub struct Method(Box<str>);
+
+impl Method {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<Method> for String {
+    fn from(t: Method) -> String {
+        String::from(t.0)
+    }
+}
+
 /// Builder struct for a request object
 #[derive(Default)]
 pub struct RequestBuilder<M = ()> {
@@ -309,19 +325,19 @@ pub struct RequestObject {
     params: Option<InnerParams>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Option<Id>>,
+    id: Option<Option<Id>>,
 }
 
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct BytesRequestObject {
-    pub jsonrpc: V2,
-    pub method: Box<str>,
-    pub params: Option<Box<RawValue>>,
+    jsonrpc: V2,
+    method: Box<str>,
+    params: Option<Box<RawValue>>,
     #[serde(deserialize_with = "RequestObject::deserialize_id")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Option<Id>>,
+    id: Option<Option<Id>>,
 }
 
 impl From<BytesRequestObject> for RequestObject {
@@ -425,6 +441,32 @@ impl<T: Send + Sync + 'static> FromRequest for Data<T> {
 impl<T: DeserializeOwned> FromRequest for Params<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         Ok(Self::from_request_object(&req.inner)?)
+    }
+}
+
+#[async_trait::async_trait]
+impl FromRequest for Id {
+    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+        Ok(req
+            .inner
+            .id
+            .clone()
+            .and_then(|x| x)
+            .ok_or_else(|| Error::internal("No `id` provided"))?)
+    }
+}
+
+#[async_trait::async_trait]
+impl FromRequest for Method {
+    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+        Ok(Method(req.inner.method.clone()))
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: FromRequest> FromRequest for Option<T> {
+    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+        Ok(T::from_request(req).await.ok())
     }
 }
 
@@ -1225,7 +1267,7 @@ where
 pub struct Hyper<R>(pub(crate) Arc<Server<R>>);
 
 #[cfg(feature = "hyper-integration")]
-impl<R> tower_service::Service<hyper::Request<hyper::Body>> for Hyper<R>
+impl<R> hyper::service::Service<hyper::Request<hyper::Body>> for Hyper<R>
 where
     R: Router + Send + Sync + 'static,
 {
@@ -1242,6 +1284,8 @@ where
     }
 
     fn call(&mut self, req: hyper::Request<hyper::Body>) -> Self::Future {
+        use hyper::body::HttpBody;
+
         let service = Arc::clone(&self.0);
 
         let rt = async move {
@@ -1258,7 +1302,7 @@ where
 
             let mut body = req.into_body();
 
-            while let Some(chunk) = body.next().await {
+            while let Some(chunk) = body.data().await {
                 buf.extend(chunk?);
             }
 
