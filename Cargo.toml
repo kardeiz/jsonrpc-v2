@@ -34,6 +34,7 @@ actix-web-v1 = { version = "1", package = "actix-web", optional = true }
 actix-service-v04 = { version = "0.4", package = "actix-service", optional = true }
 bytes-v04 = { version = "0.4", package = "bytes", optional = true }
 bytes-v05 = { version = "0.5", package = "bytes", optional = true }
+bytes-v10 = { version = "1.0", package = "bytes", optional = true }
 
 [dependencies.serde]
 features = ["derive"]

@@ -80,6 +80,9 @@ use futures::stream::TryStreamExt;
 use extensions::concurrent::Extensions;
 use std::{collections::HashMap, marker::PhantomData};
 
+#[cfg(feature = "bytes-v10")]
+use bytes_v10::Bytes;
+
 #[cfg(feature = "bytes-v05")]
 use bytes_v05::Bytes;
 
