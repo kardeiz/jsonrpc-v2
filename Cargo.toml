@@ -2,7 +2,7 @@
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
 edition = "2018"
 name = "jsonrpc-v2"
-version = "0.8.0"
+version = "0.9.0"
 description = "JSONRPC 2.0 server"
 keywords = ["jsonrpc", "json-rpc", "jsonrpc2", "rpc"]
 license = "MIT"
@@ -15,7 +15,7 @@ easy-errors = []
 actix-web-v1-integration = ["actix-web-v1", "actix-service-v04", "futures-v01", "bytes-v04", "futures/compat"]
 actix-web-v2-integration = ["actix-web-v2", "actix-service-v1", "bytes-v05"]
 actix-web-v3-integration = ["actix-web-v3", "actix-service-v1", "bytes-v05"]
-hyper-integration = ["hyper", "hyper/full", "tower-service", "bytes-v05"]
+hyper-integration = ["hyper", "hyper/full", "tower-service", "bytes-v10"]
 macros = ["jsonrpc-v2-macros"]
 
 [dependencies]

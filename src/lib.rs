@@ -1298,9 +1298,9 @@ where
                 .and_then(|x| x.to_str().ok())
                 .and_then(|x| x.parse().ok())
             {
-                bytes_v05::BytesMut::with_capacity(content_length)
+                bytes_v10::BytesMut::with_capacity(content_length)
             } else {
-                bytes_v05::BytesMut::default()
+                bytes_v10::BytesMut::default()
             };
 
             let mut body = req.into_body();

@@ -39,7 +39,7 @@ async fn main() -> std::io::Result<()> {
         let rpc = rpc.clone();
         App::new().service(web::service("/api").guard(guard::Post()).finish(rpc.into_web_service()))
     })
-    .bind("127.0.0.1:63000")?
+    .bind("0.0.0.0:3000")?
     .run()
     .await
 }
