@@ -331,6 +331,19 @@ pub struct RequestObject {
     id: Option<Option<Id>>,
 }
 
+impl RequestObject {
+
+    pub fn method_ref(&self) -> &str {
+        &self.method
+    }
+
+    pub fn id_ref(&self) -> Option<&Id> {
+        self.id.as_ref().and_then(|x| x.as_ref())
+    }
+
+}
+
+
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
