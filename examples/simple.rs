@@ -18,11 +18,6 @@ async fn message(data: Data<String>) -> Result<String, Error> {
     Ok(String::from(&*data))
 }
 
-#[jsonrpc_v2_method(wrapped_fn = "message_x", externify = true)]
-pub async fn message_test(a: i32, b: i32) -> Result<String, Error> {
-    Ok(format!("{} + {}", a, b))
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rpc = Server::new()
@@ -30,13 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("message", message)
-        .with_method("message-test", |params| async move { message_x(params).await })
         .finish_unwrapped();
 
     let req = RequestObject::request()
         .with_method("sub")
         .with_params(serde_json::json!([12, 12]))
         .finish();
+
+    println!("{}", serde_json::to_string_pretty(&req)?);
 
     let res = rpc.handle(req).await;
 

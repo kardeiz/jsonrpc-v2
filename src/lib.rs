@@ -320,7 +320,7 @@ enum InnerParams {
 }
 
 /// Request/Notification object
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct RequestObject {
     jsonrpc: V2,
