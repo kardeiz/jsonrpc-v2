@@ -1,10 +1,10 @@
 /*!
 A very small and very fast JSON-RPC 2.0 server-focused framework.
 
-Provides integrations for both `hyper` and `actix-web` (both 1.x and 2.x).
-Enable features `actix-web-v1-integration`, `actix-web-v2-integration`, or `hyper-integration` depending on need.
+Provides integrations for both `hyper` and `actix-web` (1.x, 2.x, 3.x, 4.x).
+Enable features `actix-web-v3-integration`, `hyper-integration`, etc. as needed.
 
-`actix-web-v2-integration` is enabled by default. Make sure to add `default-features = false` if using `hyper` or `actix-web` 1.x.
+`actix-web-v4-integration` is enabled by default. Make sure to add `default-features = false` if using `hyper` or other `actix-web` versions.
 
 Also see the `easy-errors` feature flag (not enabled by default). Enabling this flag will implement [`ErrorLike`](https://docs.rs/jsonrpc-v2/&#42;/jsonrpc_v2/trait.ErrorLike.html)
 for anything that implements `Display`, and the display value will be provided in the `message` field of the JSON-RPC 2.0 `Error` response.
