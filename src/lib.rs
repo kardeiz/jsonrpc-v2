@@ -82,7 +82,6 @@ use futures::future::TryFutureExt;
 #[cfg(any(feature = "actix-web-v2", feature = "actix-web-v3", feature = "actix-web-v4"))]
 use futures::stream::TryStreamExt;
 
-use extensions::concurrent::Extensions;
 use std::{collections::HashMap, marker::PhantomData};
 
 #[cfg(feature = "bytes-v10")]
@@ -97,11 +96,20 @@ use bytes_v04::Bytes;
 #[cfg(feature = "macros")]
 pub use jsonrpc_v2_macros::jsonrpc_v2_method;
 
+pub use type_map::concurrent::TypeMap;
+
 #[cfg(feature = "macros")]
 pub mod exp {
     pub use serde;
     pub use serde_json;
 }
+
+#[cfg(feature = "actix-web-v4")]
+use actix_web_v4::HttpRequest;
+
+#[cfg(feature = "actix-web-v4")]
+#[derive(Clone)]
+pub(crate) struct HttpRequestWrapper(pub HttpRequest);
 
 type BoxedSerialize = Box<dyn erased_serde::Serialize + Send>;
 
@@ -337,7 +345,6 @@ pub struct RequestObject {
 }
 
 impl RequestObject {
-
     pub fn method_ref(&self) -> &str {
         &self.method
     }
@@ -345,9 +352,7 @@ impl RequestObject {
     pub fn id_ref(&self) -> Option<&Id> {
         self.id.as_ref().and_then(|x| x.as_ref())
     }
-
 }
-
 
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
@@ -387,10 +392,14 @@ impl RequestObject {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct LocalData(pub Arc<TypeMap>);
+
 #[doc(hidden)]
 pub struct RequestObjectWithData {
     inner: RequestObject,
-    data: Arc<Extensions>,
+    data: Arc<TypeMap>,
+    local_data: Option<LocalData>,
 }
 
 /// [`FromRequest`](trait.FromRequest.html) wrapper for request params
@@ -454,6 +463,18 @@ impl<T: Send + Sync + 'static> FromRequest for Data<T> {
         let out = req.data.get::<Data<T>>().map(|x| Data(Arc::clone(&x.0))).ok_or_else(|| {
             Error::internal(format!("Missing data for: `{}`", std::any::type_name::<T>()))
         })?;
+        Ok(out)
+    }
+}
+
+#[async_trait::async_trait]
+impl FromRequest for LocalData {
+    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+        let out = req
+            .local_data
+            .clone()
+            .ok_or_else(|| Error::internal(format!("Missing data for: `LocalData`")))?;
+
         Ok(out)
     }
 }
@@ -746,16 +767,18 @@ impl Router for MapRouter {
 
 /// Server/request handler
 pub struct Server<R> {
-    data: Arc<Extensions>,
+    data: Arc<TypeMap>,
     router: R,
+    from_http_request_fn: Option<Box<dyn Fn(&'_ HttpRequest) -> TypeMap + Send + Sync>>,
 }
 
 /// Builder used to add methods to a server
 ///
 /// Created with `Server::new` or `Server::with_state`
 pub struct ServerBuilder<R> {
-    data: Extensions,
+    data: TypeMap,
     router: R,
+    from_http_request_fn: Option<Box<dyn Fn(&'_ HttpRequest) -> TypeMap + Send + Sync>>,
 }
 
 impl Server<MapRouter> {
@@ -766,7 +789,7 @@ impl Server<MapRouter> {
 
 impl<R: Router> Server<R> {
     pub fn with_router(router: R) -> ServerBuilder<R> {
-        ServerBuilder { data: Extensions::new(), router }
+        ServerBuilder { data: TypeMap::new(), router, from_http_request_fn: None }
     }
 }
 
@@ -774,6 +797,15 @@ impl<R: Router> ServerBuilder<R> {
     /// Add a data/state storage container to the server
     pub fn with_data<T: Send + Sync + 'static>(mut self, data: Data<T>) -> Self {
         self.data.insert(data);
+        self
+    }
+
+    /// Add a data/state storage container to the server
+    pub fn with_from_http_request_fn<T: Fn(&'_ HttpRequest) -> TypeMap + Send + Sync + 'static>(
+        mut self,
+        fn_: T,
+    ) -> Self {
+        self.from_http_request_fn = Some(Box::new(fn_));
         self
     }
 
@@ -800,14 +832,14 @@ impl<R: Router> ServerBuilder<R> {
 
     /// Convert the server builder into the finished struct, wrapped in an `Arc`
     pub fn finish(self) -> Arc<Server<R>> {
-        let ServerBuilder { router, data } = self;
-        Arc::new(Server { router, data: Arc::new(data) })
+        let ServerBuilder { router, data, from_http_request_fn } = self;
+        Arc::new(Server { router, data: Arc::new(data), from_http_request_fn })
     }
 
     /// Convert the server builder into the finished struct
     pub fn finish_unwrapped(self) -> Server<R> {
-        let ServerBuilder { router, data } = self;
-        Server { router, data: Arc::new(data) }
+        let ServerBuilder { router, data, from_http_request_fn } = self;
+        Server { router, data: Arc::new(data), from_http_request_fn }
     }
 }
 
@@ -949,12 +981,12 @@ where
     /// Handle requests, and return appropriate responses
     pub fn handle<I: Into<RequestKind>>(&self, req: I) -> impl Future<Output = ResponseObjects> {
         match req.into() {
-            RequestKind::Bytes(bytes) => future::Either::Left(self.handle_bytes(bytes)),
+            RequestKind::Bytes(bytes) => future::Either::Left(self.handle_bytes(bytes, None)),
             RequestKind::RequestObject(req) => future::Either::Right(future::Either::Left(
-                self.handle_request_object(req).map(From::from),
+                self.handle_request_object(req, None).map(From::from),
             )),
             RequestKind::ManyRequestObjects(reqs) => future::Either::Right(future::Either::Right(
-                self.handle_many_request_objects(reqs).map(From::from),
+                self.handle_many_request_objects(reqs, None).map(From::from),
             )),
         }
     }
@@ -962,8 +994,16 @@ where
     fn handle_request_object(
         &self,
         req: RequestObject,
+        http_req_opt: Option<HttpRequestWrapper>,
     ) -> impl Future<Output = SingleResponseObject> {
-        let req = RequestObjectWithData { inner: req, data: Arc::clone(&self.data) };
+        let local_data = match (self.from_http_request_fn.as_ref(), http_req_opt) {
+            (Some(from_http_request_fn), Some(http_req)) => {
+                Some(LocalData(Arc::new(from_http_request_fn(&http_req.0))))
+            }
+            _ => None,
+        };
+
+        let req = RequestObjectWithData { inner: req, data: Arc::clone(&self.data), local_data };
 
         let opt_id = match req.inner.id {
             Some(Some(ref id)) => Some(id.clone()),
@@ -988,9 +1028,10 @@ where
     fn handle_many_request_objects<I: IntoIterator<Item = RequestObject>>(
         &self,
         reqs: I,
+        http_req_opt: Option<HttpRequestWrapper>,
     ) -> impl Future<Output = ManyResponseObjects> {
         reqs.into_iter()
-            .map(|r| self.handle_request_object(r))
+            .map(|r| self.handle_request_object(r, http_req_opt.clone()))
             .collect::<futures::stream::FuturesUnordered<_>>()
             .filter_map(|res| async move {
                 match res {
@@ -1008,7 +1049,11 @@ where
             })
     }
 
-    fn handle_bytes(&self, bytes: Bytes) -> impl Future<Output = ResponseObjects> {
+    fn handle_bytes(
+        &self,
+        bytes: Bytes,
+        http_req_opt: Option<HttpRequestWrapper>,
+    ) -> impl Future<Output = ResponseObjects> {
         if let Ok(raw_values) = OneOrManyRawValues::try_from_slice(bytes.as_ref()) {
             match raw_values {
                 OneOrManyRawValues::Many(raw_reqs) => {
@@ -1032,21 +1077,23 @@ where
                         .collect::<Vec<_>>();
 
                     future::Either::Right(future::Either::Left(
-                        self.handle_many_request_objects(okays.into_iter().flat_map(|x| x)).map(
-                            |res| match res {
-                                ManyResponseObjects::Many(mut many) => {
-                                    many.extend(errs);
-                                    ResponseObjects::Many(many)
+                        self.handle_many_request_objects(
+                            okays.into_iter().flat_map(|x| x),
+                            http_req_opt,
+                        )
+                        .map(|res| match res {
+                            ManyResponseObjects::Many(mut many) => {
+                                many.extend(errs);
+                                ResponseObjects::Many(many)
+                            }
+                            ManyResponseObjects::Empty => {
+                                if errs.is_empty() {
+                                    ResponseObjects::Empty
+                                } else {
+                                    ResponseObjects::Many(errs)
                                 }
-                                ManyResponseObjects::Empty => {
-                                    if errs.is_empty() {
-                                        ResponseObjects::Empty
-                                    } else {
-                                        ResponseObjects::Many(errs)
-                                    }
-                                }
-                            },
-                        ),
+                            }
+                        }),
                     ))
                 }
                 OneOrManyRawValues::One(raw_req) => {
@@ -1054,7 +1101,7 @@ where
                         .map(RequestObject::from)
                     {
                         Ok(rn) => future::Either::Right(future::Either::Right(
-                            self.handle_request_object(rn).map(|res| match res {
+                            self.handle_request_object(rn, http_req_opt).map(|res| match res {
                                 SingleResponseObject::One(r) => ResponseObjects::One(r),
                                 _ => ResponseObjects::Empty,
                             }),
@@ -1224,16 +1271,18 @@ where
                     Ok::<_, actix_web_v4::Error>(body)
                 })
                 .and_then(move |bytes| {
-                    service.handle_bytes(bytes.freeze()).map(|res| match res {
-                        ResponseObjects::Empty => Ok(actix_web_v4::dev::ServiceResponse::new(
-                            req,
-                            actix_web_v4::HttpResponse::NoContent().finish(),
-                        )),
-                        json => Ok(actix_web_v4::dev::ServiceResponse::new(
-                            req,
-                            actix_web_v4::HttpResponse::Ok().json(json),
-                        )),
-                    })
+                    service.handle_bytes(bytes.freeze(), Some(HttpRequestWrapper(req.clone()))).map(
+                        |res| match res {
+                            ResponseObjects::Empty => Ok(actix_web_v4::dev::ServiceResponse::new(
+                                req,
+                                actix_web_v4::HttpResponse::NoContent().finish(),
+                            )),
+                            json => Ok(actix_web_v4::dev::ServiceResponse::new(
+                                req,
+                                actix_web_v4::HttpResponse::Ok().json(json),
+                            )),
+                        },
+                    )
                 });
             rt
         };
