@@ -416,7 +416,7 @@ impl RequestObject {
 #[doc(hidden)]
 pub struct RequestObjectWithData {
     inner: RequestObject,
-    data: Arc<TypeMap>,
+    data: Option<Arc<TypeMap>>,
     http_request_local_data: Option<Arc<TypeMap>>,
 }
 
@@ -504,7 +504,7 @@ impl<T: Send + Sync + 'static> FromRequest for HttpRequestLocalData<T> {
 #[async_trait::async_trait]
 impl<T: Send + Sync + 'static> FromRequest for Data<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
-        let out = req.data.get::<Data<T>>().map(|x| Data(Arc::clone(&x.0))).ok_or_else(|| {
+        let out = req.data.as_ref().and_then(|x| x.get::<Data<T>>()).map(|x| Data(Arc::clone(&x.0))).ok_or_else(|| {
             Error::internal(format!("Missing data for: `{}`", std::any::type_name::<T>()))
         })?;
         Ok(out)
@@ -811,7 +811,7 @@ impl Router for MapRouter {
 
 /// Server/request handler
 pub struct Server<R> {
-    data: Arc<TypeMap>,
+    data: Option<Arc<TypeMap>>,
     router: R,
     extract_from_http_request_fns: Option<
         Vec<
@@ -842,7 +842,7 @@ pub struct Server<R> {
 ///
 /// Created with `Server::new` or `Server::with_state`
 pub struct ServerBuilder<R> {
-    data: TypeMap,
+    data: Option<TypeMap>,
     router: R,
     extract_from_http_request_fns: Option<
         Vec<
@@ -868,14 +868,16 @@ impl Server<MapRouter> {
 
 impl<R: Router> Server<R> {
     pub fn with_router(router: R) -> ServerBuilder<R> {
-        ServerBuilder { data: TypeMap::new(), router, extract_from_http_request_fns: None }
+        ServerBuilder { data: None, router, extract_from_http_request_fns: None }
     }
 }
 
 impl<R: Router> ServerBuilder<R> {
     /// Add a data/state storage container to the server
     pub fn with_data<T: Send + Sync + 'static>(mut self, data: Data<T>) -> Self {
-        self.data.insert(data);
+        let mut map = self.data.take().unwrap_or_else(TypeMap::new);
+        map.insert(data);
+        self.data = Some(map);
         self
     }
 
@@ -920,13 +922,13 @@ impl<R: Router> ServerBuilder<R> {
     /// Convert the server builder into the finished struct, wrapped in an `Arc`
     pub fn finish(self) -> Arc<Server<R>> {
         let ServerBuilder { router, data, extract_from_http_request_fns } = self;
-        Arc::new(Server { router, data: Arc::new(data), extract_from_http_request_fns })
+        Arc::new(Server { router, data: data.map(Arc::new), extract_from_http_request_fns })
     }
 
     /// Convert the server builder into the finished struct
     pub fn finish_unwrapped(self) -> Server<R> {
         let ServerBuilder { router, data, extract_from_http_request_fns } = self;
-        Server { router, data: Arc::new(data), extract_from_http_request_fns }
+        Server { router, data: data.map(Arc::new), extract_from_http_request_fns }
     }
 }
 
@@ -1101,7 +1103,7 @@ where
                 _ => future::Either::Right(future::ready::<Option<Arc<TypeMap>>>(None)),
             };
 
-        let data = Arc::clone(&self.data);
+        let data = self.data.clone();
 
         let opt_id = match req.id {
             Some(Some(ref id)) => Some(id.clone()),
