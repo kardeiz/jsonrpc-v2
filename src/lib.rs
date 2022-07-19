@@ -67,20 +67,20 @@ use serde_json::{value::RawValue, Value};
 use std::sync::Arc;
 
 use futures::{
-    future::{self, Future, FutureExt},
-    stream::StreamExt,
+    future::{self, Future, FutureExt, TryFutureExt},
+    stream::{StreamExt, TryStreamExt},
 };
 
-#[cfg(any(
-    feature = "actix-web-v1",
-    feature = "actix-web-v2",
-    feature = "actix-web-v3",
-    feature = "actix-web-v4"
-))]
-use futures::future::TryFutureExt;
+// #[cfg(any(
+//     feature = "actix-web-v1",
+//     feature = "actix-web-v2",
+//     feature = "actix-web-v3",
+//     feature = "actix-web-v4"
+// ))]
+// use futures::future::TryFutureExt;
 
-#[cfg(any(feature = "actix-web-v2", feature = "actix-web-v3", feature = "actix-web-v4"))]
-use futures::stream::TryStreamExt;
+// #[cfg(any(feature = "actix-web-v2", feature = "actix-web-v3", feature = "actix-web-v4"))]
+// use futures::stream::TryStreamExt;
 
 use std::{collections::HashMap, marker::PhantomData};
 
@@ -107,7 +107,28 @@ pub mod exp {
 #[cfg(feature = "actix-web-v4")]
 use actix_web_v4::HttpRequest;
 
-#[cfg(feature = "actix-web-v4")]
+// #[cfg(feature = "actix-web-v4")]
+// #[derive(Clone)]
+// pub(crate) struct HttpRequestWrapper(pub HttpRequest);
+
+#[cfg(feature = "hyper-integration")]
+#[derive(Clone)]
+pub struct HttpRequest {
+    pub method: http::Method,
+    pub uri: http::Uri,
+    pub version: http::Version,
+    pub headers: http::HeaderMap<http::HeaderValue>,
+}
+
+#[cfg(feature = "hyper-integration")]
+impl From<http::request::Parts> for HttpRequest {
+    fn from(t: http::request::Parts) -> Self {
+        let http::request::Parts { method, uri, version, headers, .. } = t;
+        Self { method, uri, version, headers }
+    }
+}
+
+#[cfg(any(feature = "actix-web-v4", feature = "hyper-integration"))]
 #[derive(Clone)]
 pub(crate) struct HttpRequestWrapper(pub HttpRequest);
 
@@ -392,14 +413,11 @@ impl RequestObject {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct LocalData(pub Arc<TypeMap>);
-
 #[doc(hidden)]
 pub struct RequestObjectWithData {
     inner: RequestObject,
     data: Arc<TypeMap>,
-    local_data: Option<LocalData>,
+    http_request_local_data: Option<Arc<TypeMap>>,
 }
 
 /// [`FromRequest`](trait.FromRequest.html) wrapper for request params
@@ -457,6 +475,32 @@ impl<T> std::ops::Deref for Data<T> {
     }
 }
 
+/// Data/state storage container
+pub struct HttpRequestLocalData<T>(pub Arc<T>);
+
+impl<T> std::ops::Deref for HttpRequestLocalData<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: Send + Sync + 'static> FromRequest for HttpRequestLocalData<T> {
+    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+        let out = req
+            .http_request_local_data
+            .as_ref()
+            .and_then(|x| x.get::<Arc<T>>())
+            .map(|x| HttpRequestLocalData(Arc::clone(&x)))
+            .ok_or_else(|| {
+                Error::internal(format!("Missing data for: `{}`", std::any::type_name::<T>()))
+            })?;
+        Ok(out)
+    }
+}
+
 #[async_trait::async_trait]
 impl<T: Send + Sync + 'static> FromRequest for Data<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
@@ -467,17 +511,17 @@ impl<T: Send + Sync + 'static> FromRequest for Data<T> {
     }
 }
 
-#[async_trait::async_trait]
-impl FromRequest for LocalData {
-    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
-        let out = req
-            .local_data
-            .clone()
-            .ok_or_else(|| Error::internal(format!("Missing data for: `LocalData`")))?;
+// #[async_trait::async_trait]
+// impl FromRequest for LocalData {
+//     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+//         let out = req
+//             .local_data
+//             .clone()
+//             .ok_or_else(|| Error::internal(format!("Missing data for: `LocalData`")))?;
 
-        Ok(out)
-    }
-}
+//         Ok(out)
+//     }
+// }
 
 #[async_trait::async_trait]
 impl<T: DeserializeOwned> FromRequest for Params<T> {
@@ -728,12 +772,12 @@ where
                 as std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>> + Send>>
         };
 
-        BoxedHandler(Box::new(inner))
+        BoxedHandler(Arc::new(inner))
     }
 }
 
 pub struct BoxedHandler(
-    Box<
+    Arc<
         dyn Fn(
                 RequestObjectWithData,
             )
@@ -769,8 +813,30 @@ impl Router for MapRouter {
 pub struct Server<R> {
     data: Arc<TypeMap>,
     router: R,
-    from_http_request_fn: Option<Box<dyn Fn(&'_ HttpRequest) -> TypeMap + Send + Sync>>,
+    extract_from_http_request_fns: Option<
+        Vec<
+            Box<
+                dyn Fn(
+                        &'_ HttpRequest,
+                    ) -> std::pin::Pin<
+                        Box<
+                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send,
+                        >,
+                    > + Send
+                    + Sync,
+            >,
+        >,
+    >,
 }
+
+// Box::pin(async move {
+//     let out = {
+//         let param = T::from_request(&req).await?;
+//         hnd.call(param).await?
+//     };
+//     Ok(Box::new(out) as BoxedSerialize)
+// })
+//     as std::pin::Pin<Box<dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send>>
 
 /// Builder used to add methods to a server
 ///
@@ -778,7 +844,20 @@ pub struct Server<R> {
 pub struct ServerBuilder<R> {
     data: TypeMap,
     router: R,
-    from_http_request_fn: Option<Box<dyn Fn(&'_ HttpRequest) -> TypeMap + Send + Sync>>,
+    extract_from_http_request_fns: Option<
+        Vec<
+            Box<
+                dyn Fn(
+                        &'_ HttpRequest,
+                    ) -> std::pin::Pin<
+                        Box<
+                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send,
+                        >,
+                    > + Send
+                    + Sync,
+            >,
+        >,
+    >,
 }
 
 impl Server<MapRouter> {
@@ -789,7 +868,7 @@ impl Server<MapRouter> {
 
 impl<R: Router> Server<R> {
     pub fn with_router(router: R) -> ServerBuilder<R> {
-        ServerBuilder { data: TypeMap::new(), router, from_http_request_fn: None }
+        ServerBuilder { data: TypeMap::new(), router, extract_from_http_request_fns: None }
     }
 }
 
@@ -800,12 +879,20 @@ impl<R: Router> ServerBuilder<R> {
         self
     }
 
-    /// Add a data/state storage container to the server
-    pub fn with_from_http_request_fn<T: Fn(&'_ HttpRequest) -> TypeMap + Send + Sync + 'static>(
-        mut self,
-        fn_: T,
-    ) -> Self {
-        self.from_http_request_fn = Some(Box::new(fn_));
+    pub fn with_extract_from_http_request_fn<T, U, V>(mut self, fn_: T) -> Self
+    where
+        U: Send + Sync + 'static,
+        V: Future<Output = Result<U, Error>> + Send + 'static,
+        T: Fn(&'_ HttpRequest) -> V + Send + Sync + 'static,
+    {
+        let mut extract_from_http_request_fns =
+            self.extract_from_http_request_fns.take().unwrap_or_else(Vec::new);
+
+        extract_from_http_request_fns.push(Box::new(move |req| {
+            Box::pin(fn_(req).map_ok(|x| type_map::concurrent::KvPair::new(std::sync::Arc::new(x))))
+        }));
+
+        self.extract_from_http_request_fns = Some(extract_from_http_request_fns);
         self
     }
 
@@ -832,14 +919,14 @@ impl<R: Router> ServerBuilder<R> {
 
     /// Convert the server builder into the finished struct, wrapped in an `Arc`
     pub fn finish(self) -> Arc<Server<R>> {
-        let ServerBuilder { router, data, from_http_request_fn } = self;
-        Arc::new(Server { router, data: Arc::new(data), from_http_request_fn })
+        let ServerBuilder { router, data, extract_from_http_request_fns } = self;
+        Arc::new(Server { router, data: Arc::new(data), extract_from_http_request_fns })
     }
 
     /// Convert the server builder into the finished struct
     pub fn finish_unwrapped(self) -> Server<R> {
-        let ServerBuilder { router, data, from_http_request_fn } = self;
-        Server { router, data: Arc::new(data), from_http_request_fn }
+        let ServerBuilder { router, data, extract_from_http_request_fns } = self;
+        Server { router, data: Arc::new(data), extract_from_http_request_fns }
     }
 }
 
@@ -996,26 +1083,46 @@ where
         req: RequestObject,
         http_req_opt: Option<HttpRequestWrapper>,
     ) -> impl Future<Output = SingleResponseObject> {
-        let local_data = match (self.from_http_request_fn.as_ref(), http_req_opt) {
-            (Some(from_http_request_fn), Some(http_req)) => {
-                Some(LocalData(Arc::new(from_http_request_fn(&http_req.0))))
-            }
-            _ => None,
-        };
+        let http_request_local_data_fut =
+            match (self.extract_from_http_request_fns.as_ref(), http_req_opt) {
+                (Some(extract_from_http_request_fns), Some(http_req)) => future::Either::Left(
+                    futures::future::try_join_all(
+                        extract_from_http_request_fns.iter().map(move |fn_| fn_(&http_req.0)),
+                    )
+                    .map_ok(|vs| {
+                        let mut map = TypeMap::new();
+                        for v in vs {
+                            map.insert_kv_pair(v);
+                        }
+                        Some(Arc::new(map))
+                    })
+                    .unwrap_or_else(|_| None),
+                ),
+                _ => future::Either::Right(future::ready::<Option<Arc<TypeMap>>>(None)),
+            };
 
-        let req = RequestObjectWithData { inner: req, data: Arc::clone(&self.data), local_data };
+        let data = Arc::clone(&self.data);
 
-        let opt_id = match req.inner.id {
+        let opt_id = match req.id {
             Some(Some(ref id)) => Some(id.clone()),
             Some(None) => Some(Id::Null),
             None => None,
         };
 
-        if let Some(method) = self.router.get(req.inner.method.as_ref()) {
-            let out = (&method.0)(req).then(|res| match res {
-                Ok(val) => future::ready(SingleResponseObject::result(val, opt_id)),
-                Err(e) => future::ready(SingleResponseObject::error(e, opt_id)),
-            });
+        if let Some(handler) = self.router.get(req.method.as_ref()) {
+            let handler = Arc::clone(&handler.0);
+
+            let out = http_request_local_data_fut
+                .map(|http_request_local_data| RequestObjectWithData {
+                    inner: req,
+                    data,
+                    http_request_local_data,
+                })
+                .then(move |req| handler(req))
+                .then(|res| match res {
+                    Ok(val) => future::ready(SingleResponseObject::result(val, opt_id)),
+                    Err(e) => future::ready(SingleResponseObject::error(e, opt_id)),
+                });
             future::Either::Left(out)
         } else {
             future::Either::Right(future::ready(SingleResponseObject::error(
@@ -1436,13 +1543,15 @@ where
                 bytes_v10::BytesMut::default()
             };
 
-            let mut body = req.into_body();
+            let (parts, mut body) = req.into_parts();
+
+            let req = HttpRequest::from(parts);
 
             while let Some(chunk) = body.data().await {
                 buf.extend(chunk?);
             }
 
-            match service.handle_bytes(buf.freeze()).await {
+            match service.handle_bytes(buf.freeze(), Some(HttpRequestWrapper(req.clone()))).await {
                 ResponseObjects::Empty => hyper::Response::builder()
                     .status(hyper::StatusCode::NO_CONTENT)
                     .body(hyper::Body::from(Vec::<u8>::new()))

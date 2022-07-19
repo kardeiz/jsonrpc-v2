@@ -1,5 +1,5 @@
 use actix_web_v4::{guard, web, App, HttpServer};
-use jsonrpc_v2::{Data, Error, LocalData, Params, Server, TypeMap};
+use jsonrpc_v2::{Data, Error, HttpRequestLocalData, Params, Server, TypeMap};
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
@@ -13,8 +13,11 @@ async fn test(Params(params): Params<serde_json::Value>) -> Result<String, Error
     Ok(serde_json::to_string_pretty(&params).unwrap())
 }
 
-async fn add(Params(params): Params<TwoNums>, local_data: LocalData) -> Result<usize, Error> {
-    dbg!(local_data.0.get::<String>());
+async fn add(
+    Params(params): Params<TwoNums>,
+    req_path: HttpRequestLocalData<String>,
+) -> Result<usize, Error> {
+    dbg!(req_path.0);
     Ok(params.a + params.b)
 }
 
@@ -34,10 +37,8 @@ async fn main() -> std::io::Result<()> {
         .with_method("sub", sub)
         .with_method("test", test)
         .with_method("message", message)
-        .with_from_http_request_fn(|req| {
-            let mut map = TypeMap::new();
-            map.insert(String::from(req.path()));
-            return map;
+        .with_extract_from_http_request_fn(|req| {
+            futures::future::ok::<_, Error>(String::from(req.path()))
         })
         .finish();
 
