@@ -446,12 +446,12 @@ where
 }
 
 /// A trait to extract data from the request
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 pub trait FromRequest: Sized {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error>;
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl FromRequest for () {
     async fn from_request(_: &RequestObjectWithData) -> Result<Self, Error> {
         Ok(())
@@ -486,7 +486,7 @@ impl<T> std::ops::Deref for HttpRequestLocalData<T> {
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T: Send + Sync + 'static> FromRequest for HttpRequestLocalData<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         let out = req
@@ -501,7 +501,7 @@ impl<T: Send + Sync + 'static> FromRequest for HttpRequestLocalData<T> {
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T: Send + Sync + 'static> FromRequest for Data<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         let out = req.data.as_ref().and_then(|x| x.get::<Data<T>>()).map(|x| Data(Arc::clone(&x.0))).ok_or_else(|| {
@@ -523,14 +523,14 @@ impl<T: Send + Sync + 'static> FromRequest for Data<T> {
 //     }
 // }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T: DeserializeOwned> FromRequest for Params<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         Ok(Self::from_request_object(&req.inner)?)
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl FromRequest for Id {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         Ok(req
@@ -542,35 +542,35 @@ impl FromRequest for Id {
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl FromRequest for Method {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         Ok(Method(req.inner.method.clone()))
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T: FromRequest> FromRequest for Option<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         Ok(T::from_request(req).await.ok())
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T1> FromRequest for (T1,)
 where
-    T1: FromRequest + Send,
+    T1: FromRequest,
 {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         Ok((T1::from_request(req).await?,))
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T1, T2> FromRequest for (T1, T2)
 where
-    T1: FromRequest + Send,
-    T2: FromRequest + Send,
+    T1: FromRequest,
+    T2: FromRequest,
 {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         let (t1, t2) = futures::join!(T1::from_request(req), T2::from_request(req));
@@ -578,12 +578,12 @@ where
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T1, T2, T3> FromRequest for (T1, T2, T3)
 where
-    T1: FromRequest + Send,
-    T2: FromRequest + Send,
-    T3: FromRequest + Send,
+    T1: FromRequest,
+    T2: FromRequest,
+    T3: FromRequest,
 {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         let (t1, t2, t3) =
@@ -592,13 +592,13 @@ where
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T1, T2, T3, T4> FromRequest for (T1, T2, T3, T4)
 where
-    T1: FromRequest + Send,
-    T2: FromRequest + Send,
-    T3: FromRequest + Send,
-    T4: FromRequest + Send,
+    T1: FromRequest,
+    T2: FromRequest,
+    T3: FromRequest,
+    T4: FromRequest,
 {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         let (t1, t2, t3, t4) = futures::join!(
@@ -611,14 +611,14 @@ where
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<T1, T2, T3, T4, T5> FromRequest for (T1, T2, T3, T4, T5)
 where
-    T1: FromRequest + Send,
-    T2: FromRequest + Send,
-    T3: FromRequest + Send,
-    T4: FromRequest + Send,
-    T5: FromRequest + Send,
+    T1: FromRequest,
+    T2: FromRequest,
+    T3: FromRequest,
+    T4: FromRequest,
+    T5: FromRequest,
 {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
         let (t1, t2, t3, t4, t5) = futures::join!(
@@ -633,7 +633,7 @@ where
 }
 
 #[doc(hidden)]
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 pub trait Factory<S, E, T> {
     async fn call(&self, param: T) -> Result<S, E>;
 }
@@ -656,93 +656,93 @@ where
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<FN, I, S, E> Factory<S, E, ()> for FN
 where
     S: 'static,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn() -> I + Sync,
+    I: Future<Output = Result<S, E>>,
+    FN: Fn() -> I,
 {
     async fn call(&self, _: ()) -> Result<S, E> {
         (self)().await
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<FN, I, S, E, T1> Factory<S, E, (T1,)> for FN
 where
     S: 'static,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1) -> I + Sync,
-    T1: Send + 'static,
+    I: Future<Output = Result<S, E>>,
+    FN: Fn(T1) -> I,
+    T1: 'static,
 {
     async fn call(&self, param: (T1,)) -> Result<S, E> {
         (self)(param.0).await
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<FN, I, S, E, T1, T2> Factory<S, E, (T1, T2)> for FN
 where
     S: 'static,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
+    I: Future<Output = Result<S, E>>,
+    FN: Fn(T1, T2) -> I,
+    T1: 'static,
+    T2: 'static,
 {
     async fn call(&self, param: (T1, T2)) -> Result<S, E> {
         (self)(param.0, param.1).await
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<FN, I, S, E, T1, T2, T3> Factory<S, E, (T1, T2, T3)> for FN
 where
     S: 'static,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-    T3: Send + 'static,
+    I: Future<Output = Result<S, E>>,
+    FN: Fn(T1, T2, T3) -> I,
+    T1: 'static,
+    T2: 'static,
+    T3: 'static,
 {
     async fn call(&self, param: (T1, T2, T3)) -> Result<S, E> {
         (self)(param.0, param.1, param.2).await
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<FN, I, S, E, T1, T2, T3, T4> Factory<S, E, (T1, T2, T3, T4)> for FN
 where
     S: 'static,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3, T4) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-    T3: Send + 'static,
-    T4: Send + 'static,
+    I: Future<Output = Result<S, E>>,
+    FN: Fn(T1, T2, T3, T4) -> I,
+    T1: 'static,
+    T2: 'static,
+    T3: 'static,
+    T4: 'static,
 {
     async fn call(&self, param: (T1, T2, T3, T4)) -> Result<S, E> {
         (self)(param.0, param.1, param.2, param.3).await
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl<FN, I, S, E, T1, T2, T3, T4, T5> Factory<S, E, (T1, T2, T3, T4, T5)> for FN
 where
     S: 'static,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3, T4, T5) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-    T3: Send + 'static,
-    T4: Send + 'static,
-    T5: Send + 'static,
+    I: Future<Output = Result<S, E>>,
+    FN: Fn(T1, T2, T3, T4, T5) -> I,
+    T1: 'static,
+    T2: 'static,
+    T3: 'static,
+    T4: 'static,
+    T5: 'static,
 {
     async fn call(&self, param: (T1, T2, T3, T4, T5)) -> Result<S, E> {
         (self)(param.0, param.1, param.2, param.3, param.4).await
@@ -751,25 +751,24 @@ where
 
 impl<F, S, E, T> From<Handler<F, S, E, T>> for BoxedHandler
 where
-    F: Factory<S, E, T> + 'static + Send + Sync,
+    F: Factory<S, E, T> + Send + Sync + 'static,
     S: Serialize + Send + 'static,
     Error: From<E>,
     E: 'static,
-    T: FromRequest + 'static + Send,
+    T: FromRequest + 'static,
 {
     fn from(t: Handler<F, S, E, T>) -> BoxedHandler {
         let hnd = Arc::new(t.hnd);
 
         let inner = move |req: RequestObjectWithData| {
             let hnd = Arc::clone(&hnd);
-            Box::pin(async move {
+            async move {
                 let out = {
                     let param = T::from_request(&req).await?;
                     hnd.call(param).await?
                 };
                 Ok(Box::new(out) as BoxedSerialize)
-            })
-                as std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>> + Send>>
+            }.boxed_local()
         };
 
         BoxedHandler(Arc::new(inner))
@@ -781,9 +780,8 @@ pub struct BoxedHandler(
         dyn Fn(
                 RequestObjectWithData,
             )
-                -> std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>> + Send>>
-            + Send
-            + Sync,
+                -> std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>>>>
+        + Send + Sync
     >,
 );
 
@@ -820,23 +818,13 @@ pub struct Server<R> {
                         &'_ HttpRequest,
                     ) -> std::pin::Pin<
                         Box<
-                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send,
-                        >,
-                    > + Send
-                    + Sync,
+                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>>
+                        >
+                    > + Send + Sync
             >,
         >,
     >,
 }
-
-// Box::pin(async move {
-//     let out = {
-//         let param = T::from_request(&req).await?;
-//         hnd.call(param).await?
-//     };
-//     Ok(Box::new(out) as BoxedSerialize)
-// })
-//     as std::pin::Pin<Box<dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send>>
 
 /// Builder used to add methods to a server
 ///
@@ -851,10 +839,9 @@ pub struct ServerBuilder<R> {
                         &'_ HttpRequest,
                     ) -> std::pin::Pin<
                         Box<
-                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send,
+                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>>,
                         >,
-                    > + Send
-                    + Sync,
+                    > + Send + Sync
             >,
         >,
     >,
@@ -875,7 +862,7 @@ impl<R: Router> Server<R> {
 impl<R: Router> ServerBuilder<R> {
     /// Add a data/state storage container to the server
     pub fn with_data<T: Send + Sync + 'static>(mut self, data: Data<T>) -> Self {
-        let mut map = self.data.take().unwrap_or_else(TypeMap::new);
+        let mut map = self.data.take().unwrap_or_else(type_map::concurrent::TypeMap::new);
         map.insert(data);
         self.data = Some(map);
         self
@@ -884,14 +871,14 @@ impl<R: Router> ServerBuilder<R> {
     pub fn with_extract_from_http_request_fn<T, U, V>(mut self, fn_: T) -> Self
     where
         U: Send + Sync + 'static,
-        V: Future<Output = Result<U, Error>> + Send + 'static,
+        V: Future<Output = Result<U, Error>> + 'static,
         T: Fn(&'_ HttpRequest) -> V + Send + Sync + 'static,
     {
         let mut extract_from_http_request_fns =
             self.extract_from_http_request_fns.take().unwrap_or_else(Vec::new);
 
         extract_from_http_request_fns.push(Box::new(move |req| {
-            Box::pin(fn_(req).map_ok(|x| type_map::concurrent::KvPair::new(std::sync::Arc::new(x))))
+            fn_(req).map_ok(|x| type_map::concurrent::KvPair::new(Arc::new(x))).boxed_local()
         }));
 
         self.extract_from_http_request_fns = Some(extract_from_http_request_fns);
@@ -913,7 +900,7 @@ impl<R: Router> ServerBuilder<R> {
         S: Serialize + Send + 'static,
         Error: From<E>,
         E: 'static,
-        T: FromRequest + Send + 'static,
+        T: FromRequest + 'static,
     {
         self.router.insert(name.into(), Handler::new(handler).into());
         self
@@ -1118,7 +1105,7 @@ where
                 .map(|http_request_local_data| RequestObjectWithData {
                     inner: req,
                     data,
-                    http_request_local_data,
+                    http_request_local_data
                 })
                 .then(move |req| handler(req))
                 .then(|res| match res {
