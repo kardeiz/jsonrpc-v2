@@ -1,6 +1,6 @@
 use actix_web_v4::{guard, web, App, HttpServer, FromRequest};
 use actix_identity::Identity;
-use jsonrpc_v2::{Data, Error, HttpRequestLocalData, Params, Server, TypeMap};
+use jsonrpc_v2::{Data, Error, HttpRequestLocalData, Params, Server};
 use futures::TryFutureExt;
 
 #[derive(serde::Deserialize)]
@@ -39,7 +39,13 @@ async fn main() -> std::io::Result<()> {
         .with_method("sub", sub)
         .with_method("test", test)
         .with_method("message", message)
-        .with_extract_from_http_request_fn(|req| futures::future::ok::<_, Error>(String::from(req.path())))
+        .with_extract_from_http_request_fn(|req| 
+            // futures::future::ok::<_, Error>(String::from(req.path()))
+            <Identity as FromRequest>::extract(req)
+                .map_err(|_| ())
+                .and_then(|x| futures::future::ready(x.id()).map_err(|_| ()))
+                .map_err(|_| Error::internal("No ID"))
+        )
         .finish();
 
     HttpServer::new(move || {
