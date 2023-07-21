@@ -337,7 +337,6 @@ pub struct RequestObject {
 }
 
 impl RequestObject {
-
     pub fn method_ref(&self) -> &str {
         &self.method
     }
@@ -345,9 +344,7 @@ impl RequestObject {
     pub fn id_ref(&self) -> Option<&Id> {
         self.id.as_ref().and_then(|x| x.as_ref())
     }
-
 }
-
 
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
@@ -414,7 +411,11 @@ where
             Some(InnerParams::Value(ref value)) => serde_json::from_value(value.clone()),
             None => serde_json::from_value(Value::Null),
         };
-        res.map(Params).map_err(|_| Error::INVALID_PARAMS)
+        res.map(Params).map_err(|e| Error::Full {
+            code: -32602,
+            message: format!("Invalid params: {e:}"),
+            data: None,
+        })
     }
 }
 
