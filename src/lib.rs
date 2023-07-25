@@ -136,6 +136,14 @@ impl Error {
             data: Some(Box::new(e.to_string())),
         }
     }
+
+    pub fn invalid_params(e: serde_json::Error) -> Self {
+        Error::Full {
+            code: -32602,
+            message: "Invalid params".into(),
+            data: Some(Box::new(format!("{e:#?}"))),
+        }
+    }
 }
 
 /// Trait that can be used to map custom errors to the [`Error`](enum.Error.html) object.
@@ -411,11 +419,7 @@ where
             Some(InnerParams::Value(ref value)) => serde_json::from_value(value.clone()),
             None => serde_json::from_value(Value::Null),
         };
-        res.map(Params).map_err(|e| Error::Full {
-            code: -32602,
-            message: format!("Invalid params: {e:}"),
-            data: None,
-        })
+        res.map(Params).map_err(Error::invalid_params)
     }
 }
 
