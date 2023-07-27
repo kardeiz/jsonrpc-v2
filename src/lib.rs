@@ -136,6 +136,14 @@ impl Error {
             data: Some(Box::new(e.to_string())),
         }
     }
+
+    pub fn invalid_params(e: serde_json::Error) -> Self {
+        Error::Full {
+            code: -32602,
+            message: "Invalid params".into(),
+            data: Some(Box::new(format!("{e:#?}"))),
+        }
+    }
 }
 
 /// Trait that can be used to map custom errors to the [`Error`](enum.Error.html) object.
@@ -337,7 +345,6 @@ pub struct RequestObject {
 }
 
 impl RequestObject {
-
     pub fn method_ref(&self) -> &str {
         &self.method
     }
@@ -345,9 +352,7 @@ impl RequestObject {
     pub fn id_ref(&self) -> Option<&Id> {
         self.id.as_ref().and_then(|x| x.as_ref())
     }
-
 }
-
 
 /// Request/Notification object
 #[derive(Debug, Deserialize, Default)]
@@ -414,7 +419,7 @@ where
             Some(InnerParams::Value(ref value)) => serde_json::from_value(value.clone()),
             None => serde_json::from_value(Value::Null),
         };
-        res.map(Params).map_err(|_| Error::INVALID_PARAMS)
+        res.map(Params).map_err(Error::invalid_params)
     }
 }
 
