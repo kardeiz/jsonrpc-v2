@@ -6,7 +6,11 @@ struct TwoNums {
     b: usize,
 }
 
-async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+async fn add(
+    Params(params): Params<TwoNums>,
+    req_path: HttpRequestLocalData<String>,
+) -> Result<usize, Error> {
+    dbg!(req_path.0);
     Ok(params.a + params.b)
 }
 
@@ -31,6 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_method("add", add)
         .with_method("sub", sub)
         .with_method("message", message)
+        .with_extract_from_http_request_fn(|req| {
+            futures::future::ok::<_, Error>(String::from(req.uri.path()))
+        })
         .finish();
 
     let addr = "0.0.0.0:3000".parse().unwrap();

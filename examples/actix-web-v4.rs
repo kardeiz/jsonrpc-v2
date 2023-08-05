@@ -1,5 +1,7 @@
-use actix_web_v4::{guard, web, App, HttpServer};
-use jsonrpc_v2::{Data, Error, Params, Server};
+use actix_web_v4::{guard, web, App, HttpServer, FromRequest};
+use actix_identity::Identity;
+use jsonrpc_v2::{Data, Error, HttpRequestLocalData, Params, Server};
+use futures::TryFutureExt;
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
@@ -13,7 +15,11 @@ async fn test(Params(params): Params<serde_json::Value>) -> Result<String, Error
     Ok(serde_json::to_string_pretty(&params).unwrap())
 }
 
-async fn add(Params(params): Params<TwoNums>) -> Result<usize, Error> {
+async fn add(
+    Params(params): Params<TwoNums>,
+    req_path: HttpRequestLocalData<String>,
+) -> Result<usize, Error> {
+    dbg!(req_path.0);
     Ok(params.a + params.b)
 }
 
@@ -33,11 +39,20 @@ async fn main() -> std::io::Result<()> {
         .with_method("sub", sub)
         .with_method("test", test)
         .with_method("message", message)
+        .with_extract_from_http_request_fn(|req| 
+            // futures::future::ok::<_, Error>(String::from(req.path()))
+            <Identity as FromRequest>::extract(req)
+                .map_err(|_| ())
+                .and_then(|x| futures::future::ready(x.id()).map_err(|_| ()))
+                .map_err(|_| Error::internal("No ID"))
+        )
         .finish();
 
     HttpServer::new(move || {
         let rpc = rpc.clone();
-        App::new().service(web::service("/api").guard(guard::Post()).finish(rpc.into_web_service()))
+        App::new()
+            .wrap(actix_identity::IdentityMiddleware::default())
+            .service(web::service("/api").guard(guard::Post()).finish(rpc.into_web_service()))
     })
     .bind("0.0.0.0:3000")?
     .run()
