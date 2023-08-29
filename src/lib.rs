@@ -689,39 +689,6 @@ where
     }
 }
 
-#[cfg(any(
-    feature = "actix-web-v1",
-    feature = "actix-web-v2",
-    feature = "actix-web-v3",
-    feature = "actix-web-v4"
-))]
-impl<F, S, E, T> From<Handler<F, S, E, T>> for BoxedHandler
-where
-    F: Factory<S, E, T> + 'static,
-    S: Serialize + Send + 'static,
-    Error: From<E>,
-    E: 'static,
-    T: FromRequest + 'static + Send,
-{
-    fn from(t: Handler<F, S, E, T>) -> BoxedHandler {
-        let hnd = Arc::new(t.hnd);
-
-        let inner = move |req: RequestObjectWithData| {
-            let hnd = Arc::clone(&hnd);
-            Box::pin(async move {
-                let out = {
-                    let param = T::from_request(&req).await?;
-                    hnd.call(param).await?
-                };
-                Ok(Box::new(out) as BoxedSerialize)
-            }) as std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>>>>
-        };
-
-        BoxedHandler(Box::new(inner))
-    }
-}
-
-#[cfg(feature = "hyper-integration")]
 impl<F, S, E, T> From<Handler<F, S, E, T>> for BoxedHandler
 where
     F: Factory<S, E, T> + 'static + Send + Sync,
@@ -749,21 +716,6 @@ where
     }
 }
 
-#[cfg(any(
-    feature = "actix-web-v1",
-    feature = "actix-web-v2",
-    feature = "actix-web-v3",
-    feature = "actix-web-v4"
-))]
-pub struct BoxedHandler(
-    Box<
-        dyn Fn(
-            RequestObjectWithData,
-        ) -> std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>>>>,
-    >,
-);
-
-#[cfg(feature = "hyper-integration")]
 pub struct BoxedHandler(
     Box<
         dyn Fn(
@@ -838,26 +790,6 @@ impl<R: Router> ServerBuilder<R> {
     /// ```rust,no_run
     /// async fn handle(params: Params<(i32, String)>, data: Data<HashMap<String, String>>) -> Result<String, Error> { /* ... */ }
     /// ```
-    #[cfg(any(
-        feature = "actix-web-v1",
-        feature = "actix-web-v2",
-        feature = "actix-web-v3",
-        feature = "actix-web-v4"
-    ))]
-    pub fn with_method<N, S, E, F, T>(mut self, name: N, handler: F) -> Self
-    where
-        N: Into<String>,
-        F: Factory<S, E, T> + 'static,
-        S: Serialize + Send + 'static,
-        Error: From<E>,
-        E: 'static,
-        T: FromRequest + Send + 'static,
-    {
-        self.router.insert(name.into(), Handler::new(handler).into());
-        self
-    }
-
-    #[cfg(feature = "hyper-integration")]
     pub fn with_method<N, S, E, F, T>(mut self, name: N, handler: F) -> Self
     where
         N: Into<String>,
