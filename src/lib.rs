@@ -97,6 +97,19 @@ use bytes_v04::Bytes;
 #[cfg(feature = "macros")]
 pub use jsonrpc_v2_macros::jsonrpc_v2_method;
 
+#[cfg(feature = "hyper-integration")]
+pub use factory::hyper::*;
+
+#[cfg(any(
+    feature = "actix-web-v1",
+    feature = "actix-web-v2",
+    feature = "actix-web-v3",
+    feature = "actix-web-v4"
+))]
+pub use factory::actix::*;
+
+mod factory;
+
 #[cfg(feature = "macros")]
 pub mod exp {
     pub use serde;
@@ -573,12 +586,6 @@ where
 }
 
 #[doc(hidden)]
-#[async_trait::async_trait]
-pub trait Factory<S, E, T> {
-    async fn call(&self, param: T) -> Result<S, E>;
-}
-
-#[doc(hidden)]
 struct Handler<F, S, E, T>
 where
     F: Factory<S, E, T>,
@@ -596,99 +603,39 @@ where
     }
 }
 
-#[async_trait::async_trait]
-impl<FN, I, S, E> Factory<S, E, ()> for FN
+#[cfg(any(
+    feature = "actix-web-v1",
+    feature = "actix-web-v2",
+    feature = "actix-web-v3",
+    feature = "actix-web-v4"
+))]
+impl<F, S, E, T> From<Handler<F, S, E, T>> for BoxedHandler
 where
-    S: 'static,
+    F: Factory<S, E, T> + 'static + Send + Sync,
+    S: Serialize + Send + 'static,
+    Error: From<E>,
     E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn() -> I + Sync,
+    T: FromRequest + 'static + Send,
 {
-    async fn call(&self, _: ()) -> Result<S, E> {
-        (self)().await
+    fn from(t: Handler<F, S, E, T>) -> BoxedHandler {
+        let hnd = Arc::new(t.hnd);
+
+        let inner = move |req: RequestObjectWithData| {
+            let hnd = Arc::clone(&hnd);
+            Box::pin(async move {
+                let out = {
+                    let param = T::from_request(&req).await?;
+                    hnd.call(param).await?
+                };
+                Ok(Box::new(out) as BoxedSerialize)
+            }) as std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>>>>
+        };
+
+        BoxedHandler(Box::new(inner))
     }
 }
 
-#[async_trait::async_trait]
-impl<FN, I, S, E, T1> Factory<S, E, (T1,)> for FN
-where
-    S: 'static,
-    E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1) -> I + Sync,
-    T1: Send + 'static,
-{
-    async fn call(&self, param: (T1,)) -> Result<S, E> {
-        (self)(param.0).await
-    }
-}
-
-#[async_trait::async_trait]
-impl<FN, I, S, E, T1, T2> Factory<S, E, (T1, T2)> for FN
-where
-    S: 'static,
-    E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-{
-    async fn call(&self, param: (T1, T2)) -> Result<S, E> {
-        (self)(param.0, param.1).await
-    }
-}
-
-#[async_trait::async_trait]
-impl<FN, I, S, E, T1, T2, T3> Factory<S, E, (T1, T2, T3)> for FN
-where
-    S: 'static,
-    E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-    T3: Send + 'static,
-{
-    async fn call(&self, param: (T1, T2, T3)) -> Result<S, E> {
-        (self)(param.0, param.1, param.2).await
-    }
-}
-
-#[async_trait::async_trait]
-impl<FN, I, S, E, T1, T2, T3, T4> Factory<S, E, (T1, T2, T3, T4)> for FN
-where
-    S: 'static,
-    E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3, T4) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-    T3: Send + 'static,
-    T4: Send + 'static,
-{
-    async fn call(&self, param: (T1, T2, T3, T4)) -> Result<S, E> {
-        (self)(param.0, param.1, param.2, param.3).await
-    }
-}
-
-#[async_trait::async_trait]
-impl<FN, I, S, E, T1, T2, T3, T4, T5> Factory<S, E, (T1, T2, T3, T4, T5)> for FN
-where
-    S: 'static,
-    E: 'static,
-    I: Future<Output = Result<S, E>> + Send + 'static,
-    FN: Fn(T1, T2, T3, T4, T5) -> I + Sync,
-    T1: Send + 'static,
-    T2: Send + 'static,
-    T3: Send + 'static,
-    T4: Send + 'static,
-    T5: Send + 'static,
-{
-    async fn call(&self, param: (T1, T2, T3, T4, T5)) -> Result<S, E> {
-        (self)(param.0, param.1, param.2, param.3, param.4).await
-    }
-}
-
+#[cfg(feature = "hyper-integration")]
 impl<F, S, E, T> From<Handler<F, S, E, T>> for BoxedHandler
 where
     F: Factory<S, E, T> + 'static + Send + Sync,
@@ -716,6 +663,24 @@ where
     }
 }
 
+#[cfg(any(
+    feature = "actix-web-v1",
+    feature = "actix-web-v2",
+    feature = "actix-web-v3",
+    feature = "actix-web-v4"
+))]
+pub struct BoxedHandler(
+    Box<
+        dyn Fn(
+                RequestObjectWithData,
+            )
+                -> std::pin::Pin<Box<dyn Future<Output = Result<BoxedSerialize, Error>>>>
+            + Send
+            + Sync,
+    >,
+);
+
+#[cfg(feature = "hyper-integration")]
 pub struct BoxedHandler(
     Box<
         dyn Fn(
