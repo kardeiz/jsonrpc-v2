@@ -75,13 +75,36 @@ use type_map::concurrent::TypeMap;
 
 use std::{collections::HashMap, marker::PhantomData};
 
+mod factory;
+
+pub use factory::*;
+
 #[cfg(feature = "actix-web-v4-integration")]
-pub mod actix_web;
+mod actix_web;
 
 #[cfg(feature = "actix-web-v4-integration")]
 pub use actix_web::*;
 
-type BoxedSerialize = Box<dyn erased_serde::Serialize + Send>;
+#[cfg(feature = "hyper-integration")]
+mod hyper;
+
+#[cfg(feature = "hyper-integration")]
+pub use hyper::*;
+
+#[cfg(any(
+    feature = "actix-web-v2",
+    feature = "actix-web-v3",
+))]
+mod legacy;
+
+#[cfg(any(
+    feature = "actix-web-v2",
+    feature = "actix-web-v3",
+))]
+pub use legacy::*;
+
+
+pub type BoxedSerialize = Box<dyn erased_serde::Serialize + Send>;
 
 /// Error object in a response
 #[derive(Serialize)]
@@ -373,7 +396,8 @@ impl RequestObject {
 #[doc(hidden)]
 pub struct RequestObjectWithData {
     inner: RequestObject,
-    data: Arc<Tyo>,
+    data: Option<Arc<TypeMap>>,
+    http_request_local_data: Option<Arc<TypeMap>>,
 }
 
 /// [`FromRequest`](trait.FromRequest.html) wrapper for request params
@@ -414,6 +438,7 @@ impl FromRequest for () {
     }
 }
 
+
 /// Data/state storage container
 pub struct Data<T>(pub Arc<T>);
 
@@ -425,7 +450,17 @@ impl<T> Data<T> {
 
 impl<T> std::ops::Deref for Data<T> {
     type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
 
+pub struct HttpRequestLocalData<T>(pub Arc<T>);
+
+impl<T> std::ops::Deref for HttpRequestLocalData<T> {
+    type Target = T;
+    
     fn deref(&self) -> &Self::Target {
         &*self.0
     }
@@ -434,7 +469,17 @@ impl<T> std::ops::Deref for Data<T> {
 #[async_trait::async_trait]
 impl<T: Send + Sync + 'static> FromRequest for Data<T> {
     async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
-        let out = req.data.get::<Data<T>>().map(|x| Data(Arc::clone(&x.0))).ok_or_else(|| {
+        let out = req.data.as_ref().and_then(|x| x.get::<Data<T>>()).map(|x| Data(Arc::clone(&x.0))).ok_or_else(|| {
+            Error::internal(format!("Missing data for: `{}`", std::any::type_name::<T>()))
+        })?;
+        Ok(out)
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: Send + Sync + 'static> FromRequest for HttpRequestLocalData<T> {
+    async fn from_request(req: &RequestObjectWithData) -> Result<Self, Error> {
+        let out = req.http_request_local_data.as_ref().and_then(|x| x.get::<Arc<T>>()).map(|x| HttpRequestLocalData(Arc::clone(&x))).ok_or_else(|| {
             Error::internal(format!("Missing data for: `{}`", std::any::type_name::<T>()))
         })?;
         Ok(out)
@@ -592,8 +637,21 @@ impl Router for MapRouter {
 
 /// Server/request handler
 pub struct Server<R> {
-    data: Option<Arc<TypeMap>>,
     router: R,
+    data: Option<Arc<TypeMap>>,
+    extract_from_http_request_fns: Option<
+        Vec<
+            Box<
+                dyn Fn(
+                        &'_ HttpRequest,
+                    ) -> std::pin::Pin<
+                        Box<
+                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send 
+                        >
+                    > + Send + Sync
+            >,
+        >,
+    >,
 }
 
 /// Builder used to add methods to a server
@@ -602,6 +660,19 @@ pub struct Server<R> {
 pub struct ServerBuilder<R> {
     data: Option<TypeMap>,
     router: R,
+    extract_from_http_request_fns: Option<
+        Vec<
+            Box<
+                dyn Fn(
+                        &'_ HttpRequest,
+                    ) -> std::pin::Pin<
+                        Box<
+                            dyn Future<Output = Result<type_map::concurrent::KvPair, Error>> + Send 
+                        >
+                    > + Send + Sync
+            >,
+        >,
+    >,
 }
 
 impl Server<MapRouter> {
@@ -612,7 +683,7 @@ impl Server<MapRouter> {
 
 impl<R: Router> Server<R> {
     pub fn with_router(router: R) -> ServerBuilder<R> {
-        ServerBuilder { data: None, router }
+        ServerBuilder { data: None, extract_from_http_request_fns: None, router }
     }
 }
 
@@ -646,16 +717,33 @@ impl<R: Router> ServerBuilder<R> {
         self
     }
 
+    pub fn with_extract_from_http_request_fn<T, U, V>(mut self, fn_: T) -> Self
+    where
+        U: Send + Sync + 'static,
+        V: Future<Output = Result<U, Error>> + Send + 'static,
+        T: Fn(&'_ HttpRequest) -> V + Send + Sync + 'static,
+    {
+        let mut extract_from_http_request_fns =
+            self.extract_from_http_request_fns.take().unwrap_or_else(Vec::new);
+
+        extract_from_http_request_fns.push(Box::new(move |req| {
+            fn_(req).map_ok(|x| type_map::concurrent::KvPair::new(Arc::new(x))).boxed()
+        }));
+
+        self.extract_from_http_request_fns = Some(extract_from_http_request_fns);
+        self
+    }
+
     /// Convert the server builder into the finished struct, wrapped in an `Arc`
     pub fn finish(self) -> Arc<Server<R>> {
-        let ServerBuilder { router, data } = self;
-        Arc::new(Server { router, data: Arc::new(data) })
+        let ServerBuilder { router, data, extract_from_http_request_fns } = self;
+        Arc::new(Server { router, data: data.map(Arc::new), extract_from_http_request_fns })
     }
 
     /// Convert the server builder into the finished struct
     pub fn finish_unwrapped(self) -> Server<R> {
-        let ServerBuilder { router, data } = self;
-        Server { router, data: Arc::new(data) }
+        let ServerBuilder { router, data, extract_from_http_request_fns } = self;
+        Server { router, data: data.map(Arc::new), extract_from_http_request_fns }
     }
 }
 
@@ -790,12 +878,12 @@ where
     /// Handle requests, and return appropriate responses
     pub fn handle<I: Into<RequestKind>>(&self, req: I) -> impl Future<Output = ResponseObjects> {
         match req.into() {
-            RequestKind::Bytes(bytes) => future::Either::Left(self.handle_bytes(bytes)),
+            RequestKind::Bytes(bytes) => future::Either::Left(self.handle_bytes(bytes, None)),
             RequestKind::RequestObject(req) => future::Either::Right(future::Either::Left(
-                self.handle_request_object(req).map(From::from),
+                self.handle_request_object(req, None).map(From::from),
             )),
             RequestKind::ManyRequestObjects(reqs) => future::Either::Right(future::Either::Right(
-                self.handle_many_request_objects(reqs).map(From::from),
+                self.handle_many_request_objects(reqs, None).map(From::from),
             )),
         }
     }
@@ -803,20 +891,49 @@ where
     fn handle_request_object(
         &self,
         req: RequestObject,
+        http_req_opt: Option<HttpRequest>
     ) -> impl Future<Output = SingleResponseObject> {
-        let req = RequestObjectWithData { inner: req, data: Arc::clone(&self.data) };
+        
+        let http_request_local_data_fut =
+            match (self.extract_from_http_request_fns.as_ref(), http_req_opt) {
+                (Some(extract_from_http_request_fns), Some(http_req)) => future::Either::Left(
+                    futures::future::try_join_all(
+                        extract_from_http_request_fns.iter().map(move |fn_| fn_(&http_req)),
+                    )
+                    .map_ok(|vs| {
+                        let mut map = TypeMap::new();
+                        for v in vs {
+                            map.insert_kv_pair(v);
+                        }
+                        Some(Arc::new(map))
+                    })
+                    .unwrap_or_else(|_| None),
+                ),
+                _ => future::Either::Right(future::ready::<Option<Arc<TypeMap>>>(None)),
+            };
 
-        let opt_id = match req.inner.id {
+        let data = self.data.clone();
+
+        let opt_id = match req.id {
             Some(Some(ref id)) => Some(id.clone()),
             Some(None) => Some(Id::Null),
             None => None,
         };
 
-        if let Some(method) = self.router.get(req.inner.method.as_ref()) {
-            let out = (&method.0)(req).then(|res| match res {
-                Ok(val) => future::ready(SingleResponseObject::result(val, opt_id)),
-                Err(e) => future::ready(SingleResponseObject::error(e, opt_id)),
-            });
+        if let Some(handler) = self.router.get(req.method.as_ref()) {
+            let handler = Arc::clone(&handler.0);
+            
+            let out = http_request_local_data_fut
+                .map(|http_request_local_data| RequestObjectWithData {
+                    inner: req,
+                    data,
+                    http_request_local_data
+                })
+                .then(move |req| handler(req))
+                .then(|res| match res {
+                    Ok(val) => future::ready(SingleResponseObject::result(val, opt_id)),
+                    Err(e) => future::ready(SingleResponseObject::error(e, opt_id)),
+                });
             future::Either::Left(out)
         } else {
             future::Either::Right(future::ready(SingleResponseObject::error(
@@ -829,9 +946,10 @@ where
     fn handle_many_request_objects<I: IntoIterator<Item = RequestObject>>(
         &self,
         reqs: I,
+        http_req_opt: Option<HttpRequest>
     ) -> impl Future<Output = ManyResponseObjects> {
         reqs.into_iter()
-            .map(|r| self.handle_request_object(r))
+            .map(|r| self.handle_request_object(r, http_req_opt.clone()))
             .collect::<futures::stream::FuturesUnordered<_>>()
             .filter_map(|res| async move {
                 match res {
@@ -849,7 +967,7 @@ where
             })
     }
 
-    fn handle_bytes(&self, bytes: Bytes) -> impl Future<Output = ResponseObjects> {
+    fn handle_bytes(&self, bytes: Bytes, http_req_opt: Option<HttpRequest>) -> impl Future<Output = ResponseObjects> {
         if let Ok(raw_values) = OneOrManyRawValues::try_from_slice(bytes.as_ref()) {
             match raw_values {
                 OneOrManyRawValues::Many(raw_reqs) => {
@@ -873,7 +991,7 @@ where
                         .collect::<Vec<_>>();
 
                     future::Either::Right(future::Either::Left(
-                        self.handle_many_request_objects(okays.into_iter().flat_map(|x| x)).map(
+                        self.handle_many_request_objects(okays.into_iter().flat_map(|x| x), http_req_opt).map(
                             |res| match res {
                                 ManyResponseObjects::Many(mut many) => {
                                     many.extend(errs);
@@ -895,7 +1013,7 @@ where
                         .map(RequestObject::from)
                     {
                         Ok(rn) => future::Either::Right(future::Either::Right(
-                            self.handle_request_object(rn).map(|res| match res {
+                            self.handle_request_object(rn, http_req_opt).map(|res| match res {
                                 SingleResponseObject::One(r) => ResponseObjects::One(r),
                                 _ => ResponseObjects::Empty,
                             }),

@@ -15,13 +15,13 @@ easy-errors = []
 actix-web-v2-integration = ["actix-web-v2", "actix-service-v1", "bytes-v05"]
 actix-web-v3-integration = ["actix-web-v3", "actix-service-v1", "bytes-v05"]
 actix-web-v4-integration = ["actix-web-v4", "actix-service-v2", "bytes-v10"]
-hyper-integration = ["hyper", "hyper/full", "tower-service", "bytes-v10"]
+hyper-integration = ["hyper", "hyper/full", "bytes-v10", "http-body-util"]
 [dependencies]
 erased-serde = "0.3"
 futures = "0.3"
-hyper = { version = "0.14", optional = true }
+hyper = { version = "1.5.2", optional = true, features = ["full"] }
 async-trait = "0.1.52"
-tower-service = { version = "0.3", optional = true }
+tower-service = { version = "0.3.3", optional = true }
 actix-web-v4 = { version = "4", package = "actix-web", optional = true }
 actix-web-v3 = { version = "3", package = "actix-web", optional = true }
 actix-web-v2 = { version = "2", package = "actix-web", optional = true }
@@ -30,6 +30,8 @@ actix-service-v2 = { version = "2", package = "actix-service", optional = true }
 bytes-v05 = { version = "0.5", package = "bytes", optional = true }
 bytes-v10 = { version = "1.0", package = "bytes", optional = true }
 type-map = "0.5.0"
+http-body-util = { version = "0.1.2", optional = true }
+# http = { version = "0.1.15", optional = true }
 
 [dependencies.serde]
 features = ["derive"]
@@ -43,3 +45,4 @@ version = "1"
 http = "0.1.15"
 tokio = { version = "1", features = ["full"] }
 actix-rt = "1"
+hyper-util = { version = "0.1.10", features = ["tokio"] }
