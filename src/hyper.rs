@@ -3,14 +3,17 @@ pub use futures::stream::TryStreamExt;
 
 pub use bytes_v10::Bytes;
 
-use futures::FutureExt;
 use futures::future;
-use std::sync::Arc;
 use futures::Future;
-use serde::Serialize;
+use futures::FutureExt;
 use http_body_util::{BodyExt, Full};
+use serde::Serialize;
+use std::sync::Arc;
 
-use crate::{Factory, Handler, RequestObjectWithData, Router, Error, BoxedSerialize, FromRequest, Server, ResponseObjects};
+use crate::{
+    BoxedSerialize, Error, Factory, FromRequest, Handler, RequestObjectWithData, ResponseObjects,
+    Router, Server,
+};
 
 /// Wrapper around `hyper::http::request::Parts`
 #[derive(Clone)]
@@ -18,14 +21,14 @@ pub struct HttpRequest(pub hyper::http::request::Parts);
 
 impl std::ops::Deref for HttpRequest {
     type Target = hyper::http::request::Parts;
-    
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 pub struct BoxedHandler(
-    pub Arc<
+    pub  Arc<
         dyn Fn(
                 RequestObjectWithData,
             )
@@ -72,7 +75,6 @@ where
     }
 }
 
-
 pub struct Hyper<R>(pub(crate) Arc<Server<R>>);
 
 impl<R> hyper::service::Service<hyper::Request<hyper::body::Incoming>> for Hyper<R>
@@ -84,31 +86,34 @@ where
     type Future =
         std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {       
-
+    fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {
         let service = Arc::clone(&self.0);
 
         let (parts, body) = req.into_parts();
 
-        let rt = body.collect().map_ok(|x| x.to_bytes())
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)    
+        let rt = body
+            .collect()
+            .map_ok(|x| x.to_bytes())
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             .and_then(move |bytes| {
-            service.handle_bytes(bytes, Some(HttpRequest(parts.clone()))).map(|res| match res {
-                ResponseObjects::Empty => hyper::Response::builder()
-                    .status(hyper::StatusCode::NO_CONTENT)
-                    .body(Full::new(Bytes::from(Vec::<u8>::new())))
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
-                json => serde_json::to_vec(&json)
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                    .and_then(|json| {
-                        hyper::Response::builder()
-                            .status(hyper::StatusCode::OK)
-                            .header("Content-Type", "application/json")
-                            .body(Full::new(Bytes::from(json)))
-                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                    }),
-            })
-        });
+                service.handle_bytes(bytes, Some(HttpRequest(parts.clone()))).map(|res| match res {
+                    ResponseObjects::Empty => hyper::Response::builder()
+                        .status(hyper::StatusCode::NO_CONTENT)
+                        .body(Full::new(Bytes::from(Vec::<u8>::new())))
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+                    json => serde_json::to_vec(&json)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                        .and_then(|json| {
+                            hyper::Response::builder()
+                                .status(hyper::StatusCode::OK)
+                                .header("Content-Type", "application/json")
+                                .body(Full::new(Bytes::from(json)))
+                                .map_err(|e| {
+                                    Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+                                })
+                        }),
+                })
+            });
         Box::pin(rt)
     }
 }

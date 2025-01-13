@@ -1,5 +1,5 @@
 use actix_web_v4::{guard, web, App, HttpServer};
-use jsonrpc_v2::{Data, Error, Params, Server, HttpRequestLocalData};
+use jsonrpc_v2::{Data, Error, HttpRequestLocalData, Params, Server};
 
 #[derive(serde::Deserialize)]
 struct TwoNums {
@@ -13,7 +13,10 @@ async fn test(Params(params): Params<serde_json::Value>) -> Result<String, Error
     Ok(serde_json::to_string_pretty(&params).unwrap())
 }
 
-async fn add(Params(params): Params<TwoNums>, req_path: HttpRequestLocalData<String>) -> Result<usize, Error> {
+async fn add(
+    Params(params): Params<TwoNums>,
+    req_path: HttpRequestLocalData<String>,
+) -> Result<usize, Error> {
     dbg!(req_path.0);
     Ok(params.a + params.b)
 }

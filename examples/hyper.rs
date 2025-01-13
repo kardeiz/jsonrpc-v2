@@ -1,6 +1,6 @@
+use hyper_util::rt::TokioIo;
 use jsonrpc_v2::*;
 use std::net::SocketAddr;
-use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 #[derive(serde::Deserialize)]
@@ -9,7 +9,10 @@ struct TwoNums {
     b: usize,
 }
 
-async fn add(Params(params): Params<TwoNums>, req_path: HttpRequestLocalData<String>) -> Result<usize, Error> {
+async fn add(
+    Params(params): Params<TwoNums>,
+    req_path: HttpRequestLocalData<String>,
+) -> Result<usize, Error> {
     dbg!(req_path.0);
     Ok(params.a + params.b)
 }
@@ -56,7 +59,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Spawn a tokio task to serve multiple connections concurrently
         tokio::task::spawn(async move {
-            
             // Finally, we bind the incoming connection to our `hello` service
             if let Err(err) = ::hyper::server::conn::http1::Builder::new()
                 // `service_fn` converts our function in a `Service`

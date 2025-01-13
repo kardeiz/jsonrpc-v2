@@ -4,11 +4,14 @@ pub use futures::stream::TryStreamExt;
 pub use bytes_v10::Bytes;
 
 use futures::future::FutureExt;
-use std::sync::Arc;
 use futures::Future;
 use serde::Serialize;
+use std::sync::Arc;
 
-use crate::{Factory, Handler, RequestObjectWithData, Router, Error, BoxedSerialize, FromRequest, Server, ResponseObjects};
+use crate::{
+    BoxedSerialize, Error, Factory, FromRequest, Handler, RequestObjectWithData, ResponseObjects,
+    Router, Server,
+};
 
 /// Wrapper around `actix_web::HttpRequest`
 #[derive(Clone)]
@@ -16,14 +19,14 @@ pub struct HttpRequest(pub actix_web_v4::HttpRequest);
 
 impl std::ops::Deref for HttpRequest {
     type Target = actix_web_v4::HttpRequest;
-    
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 pub struct BoxedHandler(
-    pub Arc<
+    pub  Arc<
         dyn Fn(
                 RequestObjectWithData,
             )
@@ -59,7 +62,6 @@ where
     }
 }
 
-
 impl<R> Server<R>
 where
     R: Router + 'static,
@@ -86,16 +88,18 @@ where
                     Ok::<_, actix_web_v4::Error>(body)
                 })
                 .and_then(move |bytes| {
-                    service.handle_bytes(bytes.freeze(), Some(HttpRequest(req.clone()))).map(|res| match res {
-                        ResponseObjects::Empty => Ok(actix_web_v4::dev::ServiceResponse::new(
-                            req,
-                            actix_web_v4::HttpResponse::NoContent().finish(),
-                        )),
-                        json => Ok(actix_web_v4::dev::ServiceResponse::new(
-                            req,
-                            actix_web_v4::HttpResponse::Ok().json(json),
-                        )),
-                    })
+                    service.handle_bytes(bytes.freeze(), Some(HttpRequest(req.clone()))).map(
+                        |res| match res {
+                            ResponseObjects::Empty => Ok(actix_web_v4::dev::ServiceResponse::new(
+                                req,
+                                actix_web_v4::HttpResponse::NoContent().finish(),
+                            )),
+                            json => Ok(actix_web_v4::dev::ServiceResponse::new(
+                                req,
+                                actix_web_v4::HttpResponse::Ok().json(json),
+                            )),
+                        },
+                    )
                 });
             rt
         };
