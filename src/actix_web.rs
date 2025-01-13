@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::{Factory, Handler, RequestObjectWithData, Router, Error, BoxedSerialize, FromRequest, Server, ResponseObjects};
 
+/// Wrapper around `actix_web::HttpRequest`
 #[derive(Clone)]
 pub struct HttpRequest(pub actix_web_v4::HttpRequest);
 

@@ -12,6 +12,7 @@ use http_body_util::{BodyExt, Full};
 
 use crate::{Factory, Handler, RequestObjectWithData, Router, Error, BoxedSerialize, FromRequest, Server, ResponseObjects};
 
+/// Wrapper around `hyper::http::request::Parts`
 #[derive(Clone)]
 pub struct HttpRequest(pub hyper::http::request::Parts);
 
@@ -111,20 +112,3 @@ where
         Box::pin(rt)
     }
 }
-
-// impl<R> tower_service::Service<&'a hyper::server::conn::AddrStream> for Hyper<R> {
-//     type Response = Hyper<R>;
-//     type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-//     type Future = future::Ready<Result<Self::Response, Self::Error>>;
-
-//     fn poll_ready(
-//         &mut self,
-//         _cx: &mut std::task::Context<'_>,
-//     ) -> std::task::Poll<Result<(), Self::Error>> {
-//         std::task::Poll::Ready(Ok(()))
-//     }
-
-//     fn call(&mut self, _: &'a hyper::server::conn::AddrStream) -> Self::Future {
-//         future::ready(Ok(Hyper(Arc::clone(&self.0))))
-//     }
-// }
